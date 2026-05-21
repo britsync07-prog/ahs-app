@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -38,7 +39,13 @@ var upgrader = websocket.Upgrader{
 
 		allowed := strings.Split(os.Getenv("WS_ALLOWED_ORIGINS"), ",")
 		if len(allowed) == 1 && strings.TrimSpace(allowed[0]) == "" {
-			allowed = []string{"http://localhost:1420", "http://127.0.0.1:1420"}
+			allowed = []string{
+				"http://localhost:1420",
+				"http://127.0.0.1:1420",
+				"tauri://localhost",
+				"http://tauri.localhost",
+				"https://ahs.mayfairmarketing.online",
+			}
 		}
 		for _, a := range allowed {
 			if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(a)), []byte(origin)) == 1 {
@@ -411,10 +418,12 @@ func (h *Handler) WsConnect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) writePump(c *ws.Client) {
+	ticker := time.NewTicker(30 * time.Second)
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("Ws: Panic in writePump: %v", r)
 		}
+		ticker.Stop()
 		c.Conn.Close()
 	}()
 	for {
@@ -432,6 +441,11 @@ func (h *Handler) writePump(c *ws.Client) {
 			w.Write(message)
 
 			if err := w.Close(); err != nil {
+				return
+			}
+		case <-ticker.C:
+			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				log.Printf("Ws: Ping failed for client: %v", err)
 				return
 			}
 		}

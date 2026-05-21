@@ -192,18 +192,6 @@ pub fn get_or_create_signing_key_at(config_path: PathBuf) -> (SigningKey, String
     (sk, pk)
 }
 
-fn get_local_ip() -> String {
-    use std::net::UdpSocket;
-    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("8.8.8.8:80").is_ok() {
-            if let Ok(addr) = socket.local_addr() {
-                return addr.ip().to_string();
-            }
-        }
-    }
-    "127.0.0.1".to_string()
-}
-
 fn get_config_path_internal(app_config_dir: PathBuf) -> PathBuf {
     let mut path = app_config_dir;
     std::fs::create_dir_all(&path).ok();
@@ -906,8 +894,7 @@ fn generate_desktop_identity(app: AppHandle, key_state: tauri::State<'_, SharedK
 
     let nonce = uuid::Uuid::new_v4().to_string();
     let is_onboarded = config.onboarded;
-    let local_ip = get_local_ip();
-    let backend_url = format!("http://{}:8080", local_ip);
+    let backend_url = crate::config::get_backend_url();
 
     if let Ok(mut handle_lock) = WS_JOIN_HANDLE.lock() {
         if let Some(h) = handle_lock.take() {
