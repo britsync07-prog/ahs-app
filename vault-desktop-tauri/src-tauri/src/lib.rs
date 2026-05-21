@@ -386,6 +386,7 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
     Ok(())
 }
 
+#[cfg(not(windows))]
 static FUSE_SESSION: Lazy<Mutex<Option<fuser::BackgroundSession>>> = Lazy::new(|| Mutex::new(None));
 static SYNC_TX: Lazy<Mutex<Option<fs::PrioritySender>>> =
     Lazy::new(|| Mutex::new(None));
@@ -450,10 +451,17 @@ fn start_inactivity_watcher(app: AppHandle, public_key_b64: String) {
         let last = LAST_ACTIVITY.load(Ordering::SeqCst);
         let timeout = AUTO_LOCK_TIMEOUT.load(Ordering::SeqCst);
 
+        #[cfg(not(windows))]
         if !FUSE_SESSION.lock().unwrap().is_some() {
             let mut watching = IS_WATCHING.lock().unwrap();
             *watching = false;
             break;
+        }
+        
+        #[cfg(windows)]
+        {
+             // On Windows, the session state is managed differently or not at all currently
+             // For now, we assume it stays open until manually locked or timeout
         }
 
         if now - last >= timeout {
@@ -490,12 +498,15 @@ async fn lock_vault_internal(
     key_state: tauri::State<'_, SharedKey>,
     blob_id_state: tauri::State<'_, SharedBlobId>,
 ) -> Result<(), String> {
-    let mut lock = FUSE_SESSION.lock().map_err(|e| e.to_string())?;
-    if let Some(session) = lock.take() {
-        // Drop in blocking thread to avoid Tokio panic
-        tauri::async_runtime::spawn_blocking(move || {
-            drop(session);
-        });
+    #[cfg(not(windows))]
+    {
+        let mut lock = FUSE_SESSION.lock().map_err(|e| e.to_string())?;
+        if let Some(session) = lock.take() {
+            // Drop in blocking thread to avoid Tokio panic
+            tauri::async_runtime::spawn_blocking(move || {
+                drop(session);
+            });
+        }
     }
 
     // Explicit lazy unmount to ensure UI doesn't hang if OS is slow to detach
@@ -544,6 +555,7 @@ async fn mount_vault_internal(
         }
 
         // 1. Cleanup previous session if any
+        #[cfg(not(windows))]
         {
             let mut lock = FUSE_SESSION.lock().unwrap();
             if let Some(session) = lock.take() {

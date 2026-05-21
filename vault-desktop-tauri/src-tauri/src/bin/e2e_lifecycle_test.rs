@@ -6,7 +6,15 @@ use std::time::Duration;
 use vault_desktop_tauri_lib::{fs, SharedBlobId, SharedKey};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n=== STARTING E2E VAULT LIFECYCLE TEST ===");
+    #[cfg(windows)]
+    {
+        println!("E2E Vault Lifecycle Test is not supported on Windows due to FUSE dependency.");
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    {
+        println!("\n=== STARTING E2E VAULT LIFECYCLE TEST ===");
 
     // 1. Setup State & Mock Key
     let key_state: SharedKey = Arc::new(RwLock::new(None));
@@ -131,4 +139,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .status();
 
     Ok(())
+    }
 }

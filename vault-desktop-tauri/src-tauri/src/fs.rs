@@ -1,14 +1,53 @@
+#[cfg(not(windows))]
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
     ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow,
 };
+
+#[cfg(not(windows))]
 use libc::ENOENT;
+
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs as std_fs;
+
+#[cfg(not(windows))]
 use std::os::unix::fs::FileExt;
+
+#[cfg(windows)]
+use std::os::windows::fs::FileExt;
+
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+trait FileExtCross {
+    fn read_at_cross(&self, buf: &mut [u8], offset: u64) -> std::io::Result<usize>;
+    fn write_at_cross(&self, buf: &[u8], offset: u64) -> std::io::Result<usize>;
+}
+
+impl FileExtCross for std_fs::File {
+    #[cfg(not(windows))]
+    fn read_at_cross(&self, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
+        use std::os::unix::fs::FileExt;
+        self.read_at(buf, offset)
+    }
+
+    #[cfg(windows)]
+    fn read_at_cross(&self, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
+        self.seek_read(buf, offset)
+    }
+
+    #[cfg(not(windows))]
+    fn write_at_cross(&self, buf: &[u8], offset: u64) -> std::io::Result<usize> {
+        use std::os::unix::fs::FileExt;
+        self.write_at(buf, offset)
+    }
+
+    #[cfg(windows)]
+    fn write_at_cross(&self, buf: &[u8], offset: u64) -> std::io::Result<usize> {
+        self.seek_write(buf, offset)
+    }
+}
 
 use crate::crypto::{BLOCK_SIZE, ENCRYPTED_BLOCK_SIZE};
 use crate::{SharedBlobId, SharedKey};
@@ -105,7 +144,9 @@ pub struct VaultFS {
     shadow_dir: PathBuf,
     open_files: Arc<Mutex<HashMap<u64, Arc<Mutex<OpenFile>>>>>,
     next_fh: std::sync::atomic::AtomicU64,
+    #[cfg(not(windows))]
     uid: u32,
+    #[cfg(not(windows))]
     gid: u32,
 }
 
@@ -403,6 +444,7 @@ impl VaultFS {
             let _ = tx.send(SyncCommand::PullAll);
         }
 
+        #[cfg(not(windows))]
         let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
 
         (
@@ -416,7 +458,9 @@ impl VaultFS {
                 shadow_dir,
                 open_files: Arc::new(Mutex::new(HashMap::new())),
                 next_fh: std::sync::atomic::AtomicU64::new(1),
+                #[cfg(not(windows))]
                 uid,
+                #[cfg(not(windows))]
                 gid,
             },
             tx,
@@ -510,6 +554,7 @@ impl VaultFS {
             let _ = tx.send(SyncCommand::PullAll);
         }
 
+        #[cfg(not(windows))]
         let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
 
         (
@@ -523,7 +568,9 @@ impl VaultFS {
                 shadow_dir,
                 open_files: Arc::new(Mutex::new(HashMap::new())),
                 next_fh: std::sync::atomic::AtomicU64::new(1),
+                #[cfg(not(windows))]
                 uid,
+                #[cfg(not(windows))]
                 gid,
             },
             tx,
@@ -550,13 +597,14 @@ impl VaultFS {
                 let offset = block.index * ENCRYPTED_BLOCK_SIZE;
                 open_file
                     .file
-                    .write_at(&encrypted, offset as u64)
+                    .write_at_cross(&encrypted, offset as u64)
                     .map_err(|e| e.to_string())?;
             }
         }
         Ok(())
     }
 
+    #[cfg(not(windows))]
     fn make_attr(&self, file: &VaultFile) -> FileAttr {
         let now = SystemTime::now();
         let mtime = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(file.modified_at);
@@ -587,6 +635,7 @@ impl VaultFS {
     }
 }
 
+#[cfg(not(windows))]
 impl Filesystem for VaultFS {
 
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
@@ -716,7 +765,7 @@ impl Filesystem for VaultFS {
                 // Read and decrypt new block
                 let block_offset = block_idx * ENCRYPTED_BLOCK_SIZE;
                 let mut encrypted_block = vec![0u8; ENCRYPTED_BLOCK_SIZE];
-                let bytes_read = open_file.file.read_at(&mut encrypted_block, block_offset as u64).unwrap_or(0);
+                let bytes_read = open_file.file.read_at_cross(&mut encrypted_block, block_offset as u64).unwrap_or(0);
                 
                 if bytes_read > 0 {
                     encrypted_block.truncate(bytes_read);
@@ -803,7 +852,7 @@ impl Filesystem for VaultFS {
                 // Read/Initialize new block
                 let block_offset = block_idx * ENCRYPTED_BLOCK_SIZE;
                 let mut encrypted_block = vec![0u8; ENCRYPTED_BLOCK_SIZE];
-                let bytes_read = open_file.file.read_at(&mut encrypted_block, block_offset as u64).unwrap_or(0);
+                let bytes_read = open_file.file.read_at_cross(&mut encrypted_block, block_offset as u64).unwrap_or(0);
                 
                 let block_data = if bytes_read > 0 {
                     encrypted_block.truncate(bytes_read);
@@ -990,7 +1039,7 @@ impl Filesystem for VaultFS {
                         
                         if let Ok(file) = std::fs::OpenOptions::new().read(true).write(true).open(path) {
                             let mut encrypted_block = vec![0u8; ENCRYPTED_BLOCK_SIZE];
-                            let bytes_read = file.read_at(&mut encrypted_block, end_block_offset).unwrap_or(0);
+                            let bytes_read = file.read_at_cross(&mut encrypted_block, end_block_offset).unwrap_or(0);
                             if bytes_read > 0 {
                                 encrypted_block.truncate(bytes_read);
                                 if let Ok(mut decrypted) = crate::crypto::decrypt_local_data(&encrypted_block, self.key_state.clone()) {
@@ -1000,7 +1049,7 @@ impl Filesystem for VaultFS {
                                     if decrypted.len() > new_last_block_len {
                                         decrypted.truncate(new_last_block_len);
                                         if let Ok(new_encrypted) = crate::crypto::encrypt_local_data(&decrypted, self.key_state.clone()) {
-                                            let _ = file.write_at(&new_encrypted, end_block_offset);
+                                            let _ = file.write_at_cross(&new_encrypted, end_block_offset);
                                             let _ = file.set_len(end_block_offset + new_encrypted.len() as u64);
                                         }
                                     } else {

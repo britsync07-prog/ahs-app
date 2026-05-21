@@ -6,7 +6,15 @@ use std::time::Duration;
 use vault_desktop_tauri_lib::{fs, SharedBlobId, SharedKey};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("[TEST] Starting Deep Test...");
+    #[cfg(windows)]
+    {
+        println!("[TEST] Deep Test is not supported on Windows due to FUSE dependency.");
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    {
+        println!("[TEST] Starting Deep Test...");
 
     // 1. Setup State
     let key_state: SharedKey = Arc::new(RwLock::new(None));
@@ -97,4 +105,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("[TEST] Deep Test Passed!");
     Ok(())
+    }
 }
