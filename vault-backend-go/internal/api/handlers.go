@@ -104,8 +104,8 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	// In a real production app, you might query GitHub API to get the latest release.
 	// For now, we return a structured JSON that Tauri expects.
 	updateResponse := map[string]interface{}{
-		"version":  "v0.1.0", // Change this when you release a new version
-		"notes":    "Initial production release with auto-update support.",
+		"version":  "v0.1.1", // Change this when you release a new version
+		"notes":    "Stabilized WebSocket connections and fixed redundant imports.",
 		"pub_date": "2026-05-21T12:00:00Z",
 		"platforms": map[string]interface{}{
 			"windows-x86_64": map[string]interface{}{
