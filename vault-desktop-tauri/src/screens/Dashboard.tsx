@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Shield, LayoutDashboard, Database, Activity, Smartphone, Key, Settings, Lock, Bell, HardDrive, Cpu, Sun, Moon, Info } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { QRCodeSVG } from "qrcode.react";
 import { invoke } from "@tauri-apps/api/core";
 import { VaultExplorer } from "../components/VaultExplorer";
 import { SecurityCenter } from "../components/SecurityCenter";

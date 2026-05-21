@@ -1,13 +1,10 @@
 import React from "react";
-import { Cloud, History, RefreshCcw, HardDrive, FileDown, AlertCircle, Info, ChevronRight } from "lucide-react";
+import { Cloud, History, RefreshCcw, HardDrive, Info } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { motion, AnimatePresence } from "framer-motion";
 
 export const RecoveryCenter: React.FC = () => {
-  const [mnemonic, setMnemonic] = React.useState<string | null>(null);
-  const [isRevealing, setIsRevealing] = React.useState(false);
   const [isSyncing, setIsSyncing] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
   const [stats, setStats] = React.useState<any>(null);
   const [backupSettings, setBackupSettings] = React.useState(() => {
     const saved = localStorage.getItem('vault_backup_settings');
@@ -57,21 +54,6 @@ export const RecoveryCenter: React.FC = () => {
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return `${Math.floor(diff / 86400)}d ago`;
-  };
-
-  const handleReveal = async () => {
-    setIsRevealing(true);
-    setError(null);
-    try {
-      const result = await invoke<string>("get_master_mnemonic");
-      setMnemonic(result);
-    } catch (e) {
-      console.error("Reveal failed:", e);
-      setError(String(e));
-      setTimeout(() => setError(null), 3000);
-    } finally {
-      setIsRevealing(false);
-    }
   };
 
   return (
@@ -156,7 +138,7 @@ export const RecoveryCenter: React.FC = () => {
                       await invoke("sync_now");
                       alert("AHS index synchronized successfully.");
                     } catch (e) {
-                      setError(String(e));
+                      console.error("Sync failed:", e);
                     } finally {
                       setIsSyncing(false);
                     }
