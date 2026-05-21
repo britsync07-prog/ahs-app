@@ -8,6 +8,7 @@ use fuser::{
 use libc::ENOENT;
 
 use std::collections::HashMap;
+#[cfg(not(windows))]
 use std::ffi::OsStr;
 use std::fs as std_fs;
 
@@ -49,7 +50,9 @@ impl FileExtCross for std_fs::File {
     }
 }
 
-use crate::crypto::{BLOCK_SIZE, ENCRYPTED_BLOCK_SIZE};
+#[cfg(not(windows))]
+use crate::crypto::BLOCK_SIZE;
+use crate::crypto::ENCRYPTED_BLOCK_SIZE;
 use crate::{SharedBlobId, SharedKey};
 use std::path::PathBuf;
 use tauri::AppHandle;

@@ -36,7 +36,7 @@ pub async fn connect_and_register(
     loop {
         println!("Ws: Attempting connection to {}...", url);
 
-        match connect_async(url).await {
+        match connect_async(url.clone()).await {
             Ok((ws_stream, _)) => {
                 println!("Ws: Connected successfully.");
                 retry_delay = std::time::Duration::from_secs(1);

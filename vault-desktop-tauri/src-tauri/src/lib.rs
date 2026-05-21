@@ -537,6 +537,7 @@ fn vault_mount_path() -> Result<PathBuf, String> {
     }
 }
 
+#[allow(unused_variables)]
 async fn mount_vault_internal(
     app: AppHandle,
     key_state_clone: SharedKey,
