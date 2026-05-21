@@ -45,8 +45,9 @@ func main() {
 	server := &http.Server{
 		Addr:         ":8080",
 		Handler:      router,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  1 * time.Hour,
+		WriteTimeout: 1 * time.Hour,
+		IdleTimeout:  1 * time.Hour,
 	}
 
 	// 5. Start Server with Graceful Shutdown

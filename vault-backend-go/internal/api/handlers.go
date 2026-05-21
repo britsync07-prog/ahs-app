@@ -412,6 +412,9 @@ func (h *Handler) WsConnect(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) writePump(c *ws.Client) {
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Ws: Panic in writePump: %v", r)
+		}
 		c.Conn.Close()
 	}()
 	for {
@@ -437,6 +440,9 @@ func (h *Handler) writePump(c *ws.Client) {
 
 func (h *Handler) readPump(c *ws.Client) {
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Ws: Panic in readPump: %v", r)
+		}
 		c.Hub.Unregister(c)
 		c.Conn.Close()
 	}()
@@ -456,9 +462,11 @@ func (h *Handler) readPump(c *ws.Client) {
 				if pk, ok := msg["public_key"].(string); ok {
 					nonce, _ := msg["pairing_nonce"].(string)
 					if strings.TrimSpace(pk) == "" || strings.TrimSpace(nonce) == "" {
+						log.Printf("Ws: Desktop registration failed - missing pk or nonce")
 						continue
 					}
 					h.hub.BindIdentity(pk, nonce, c)
+					log.Printf("Ws: Desktop identity bound: %s", keyFingerprint(pk))
 				}
 			} else if msg["type"] == "mobile_register" {
 				if pk, ok := msg["public_key"].(string); ok {

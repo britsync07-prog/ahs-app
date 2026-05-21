@@ -43,6 +43,9 @@ pub async fn connect_and_register(
 
                 let (mut write, mut read) = ws_stream.split();
 
+                // Wait a tiny bit for the connection to settle
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
                 // 1. Send registration payload
                 let reg = WsMessage {
                     msg_type: "desktop_register".to_string(),
@@ -74,8 +77,12 @@ pub async fn connect_and_register(
                                 }
                             }
                         }
-                        Ok(Message::Ping(_)) => {
-                            let _ = write.send(Message::Pong(vec![].into())).await;
+                        Ok(Message::Ping(p)) => {
+                            let _ = write.send(Message::Pong(p)).await;
+                        }
+                        Ok(Message::Close(_)) => {
+                            println!("Ws: Server sent close frame.");
+                            break;
                         }
                         Ok(m) => {
                             println!("Ws: Received non-text message: {:?}", m);
@@ -110,7 +117,6 @@ async fn handle_server_message(
     println!("Ws: Received message type: {}", ws_msg.msg_type);
     
     if ws_msg.msg_type == "unlock_approved" || ws_msg.msg_type == "push_relay" {
-        // If there's an encrypted key, it's a "Magic Unlock" signal for an existing vault
         if let Some(enc_key) = &ws_msg.encrypted_key {
             if enc_key == "WAKE_UP_BIOMETRIC" {
                 println!("Ws: Biometric wake-up received (no-op for desktop)");
@@ -134,7 +140,6 @@ async fn handle_server_message(
                 }
             }
         } else {
-            // If no encrypted key, it's a "First-time Setup" or "Re-pairing" signal
             println!("Ws: Processing Pairing Success signal");
             let payload = serde_json::json!({
                 "public_key": ws_msg.public_key,
@@ -146,6 +151,8 @@ async fn handle_server_message(
                 println!("Ws: Successfully emitted pairing-success to frontend");
             }
         }
+    } else if ws_msg.msg_type == "connection_established" {
+        println!("Ws: Connection confirmed by server.");
     } else {
         println!("Ws: Unhandled message type: {}", ws_msg.msg_type);
     }
