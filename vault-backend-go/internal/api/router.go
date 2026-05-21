@@ -13,7 +13,7 @@ func NewRouter(h *Handler) *chi.Mux {
 	r := chi.NewRouter()
 	allowedOrigins := strings.Split(os.Getenv("HTTP_ALLOWED_ORIGINS"), ",")
 	if len(allowedOrigins) == 1 && strings.TrimSpace(allowedOrigins[0]) == "" {
-		allowedOrigins = []string{"http://localhost:1420", "http://127.0.0.1:1420"}
+		allowedOrigins = []string{"http://localhost:1420", "http://127.0.0.1:1420", "tauri://localhost", "http://tauri.localhost"}
 	}
 
 	r.Use(middleware.Logger)
@@ -28,6 +28,7 @@ func NewRouter(h *Handler) *chi.Mux {
 	}))
 
 	r.Get("/health", h.HealthCheck)
+	r.Get("/api/update", h.HandleUpdate)
 
 	r.Route("/api/vault", func(r chi.Router) {
 		r.Post("/upload", h.UploadVault)

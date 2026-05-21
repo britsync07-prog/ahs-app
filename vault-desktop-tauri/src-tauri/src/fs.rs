@@ -213,7 +213,7 @@ fn spawn_sync_worker(
                                     let client = reqwest::blocking::Client::new();
                                     
                                     // 1. Fetch old index ID for purging
-                                    let old_index_id = if let Ok(resp) = client.get("http://localhost:8080/api/vault/index")
+                                    let old_index_id = if let Ok(resp) = client.get(format!("{}/api/vault/index", crate::config::get_backend_url()))
                                         .header("X-Desktop-PK", &pk)
                                         .send() {
                                             if let Ok(json) = resp.json::<serde_json::Value>() {
@@ -224,7 +224,7 @@ fn spawn_sync_worker(
                                     let signature = sk.sign(id.as_bytes());
                                     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
                                     
-                                    let _ = client.post("http://localhost:8080/api/vault/index")
+                                    let _ = client.post(format!("{}/api/vault/index", crate::config::get_backend_url()))
                                         .header("X-Desktop-PK", &pk)
                                         .header("X-Signature", sig_b64)
                                         .json(&serde_json::json!({
@@ -1367,7 +1367,7 @@ pub fn internal_purge_blobs(config_path: &PathBuf, blob_ids: Vec<String>) -> Res
     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
     
     let client = reqwest::blocking::Client::new();
-    let res = client.post("http://localhost:8080/api/vault/delete")
+    let res = client.post(format!("{}/api/vault/delete", crate::config::get_backend_url()))
         .header("X-Desktop-PK", pk)
         .header("X-Signature", sig_b64)
         .json(&payload)

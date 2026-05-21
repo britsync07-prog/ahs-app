@@ -1,4 +1,5 @@
 mod crypto;
+mod config;
 pub mod fs;
 mod network;
 mod oauth;
@@ -68,7 +69,7 @@ async fn request_unlock_push(app: AppHandle) -> Result<(), String> {
 
     let client = reqwest::Client::new();
     let res = client
-        .post("http://localhost:8080/api/vault/push")
+        .post(format!("{}/api/vault/push", crate::config::get_backend_url()))
         .json(&serde_json::json!({
             "target_public_key": target_pk,
             "encrypted_blob": "WAKE_UP_BIOMETRIC"
@@ -286,7 +287,7 @@ async fn share_master_key_with_phone(
 
     let client = reqwest::Client::new();
     let res = client
-        .post("http://localhost:8080/api/vault/push")
+        .post(format!("{}/api/vault/push", crate::config::get_backend_url()))
         .json(&serde_json::json!({
             "mobile_public_key": mobile_pk,
             "encrypted_blob": encrypted_b64
@@ -404,7 +405,7 @@ async fn register_device_internal(public_key: String) -> Result<(), String> {
     };
 
     let _ = client
-        .post("http://localhost:8080/api/vault/register")
+        .post(format!("{}/api/vault/register", crate::config::get_backend_url()))
         .json(&serde_json::json!({
             "public_key": public_key,
             "name": "Secure Workstation",
@@ -713,7 +714,7 @@ async fn restore_vault(
     // 2. Check if user exists on backend
     let client = reqwest::Client::new();
     let res = client
-        .get("http://localhost:8080/api/vault/stats")
+        .get(format!("{}/api/vault/stats", crate::config::get_backend_url()))
         .query(&[("public_key", &pk)])
         .send()
         .await
@@ -750,7 +751,7 @@ async fn restore_vault(
     // Also fetch the root index ID
     println!("Restoration: Fetching root index pointer...");
     let index_res = client
-        .get("http://localhost:8080/api/vault/index")
+        .get(format!("{}/api/vault/index", crate::config::get_backend_url()))
         .query(&[("public_key", &pk)])
         .send()
         .await

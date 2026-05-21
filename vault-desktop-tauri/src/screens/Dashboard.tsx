@@ -8,6 +8,7 @@ import { SecurityCenter } from "../components/SecurityCenter";
 import { RecoveryCenter } from "../components/RecoveryCenter";
 import { AutoLockSettings } from "../components/AutoLockSettings";
 import { DeviceManagement } from "../components/DeviceManagement";
+import { getBackendUrl } from "../config";
 
 interface DashboardProps {
   onLock: () => void;
@@ -74,7 +75,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLock, theme, onToggleThe
         }
 
         // 1. Fetch backend security stats
-        const response = await fetch(`http://localhost:8080/api/vault/stats${pk ? `?public_key=${encodeURIComponent(pk)}` : ''}`);
+        const response = await fetch(`${getBackendUrl()}/api/vault/stats${pk ? `?public_key=${encodeURIComponent(pk)}` : ''}`);
         
         // 2. Fetch local file count (Real-time from shared state)
         const localFiles = await invoke<any[]>("list_vault_files").catch(() => []);

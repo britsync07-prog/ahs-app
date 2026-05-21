@@ -100,6 +100,25 @@ func (h *Handler) GetActivity(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(userLogs)
 }
 
+func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
+	// In a real production app, you might query GitHub API to get the latest release.
+	// For now, we return a structured JSON that Tauri expects.
+	updateResponse := map[string]interface{}{
+		"version":  "v0.1.0", // Change this when you release a new version
+		"notes":    "Initial production release with auto-update support.",
+		"pub_date": "2026-05-21T12:00:00Z",
+		"platforms": map[string]interface{}{
+			"windows-x86_64": map[string]interface{}{
+				"signature": "", // You will get this from the build artifact (.sig file)
+				"url":       "https://github.com/britsync07-prog/ahs-app/releases/latest/download/vault-desktop-tauri.msi.zip",
+			},
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(updateResponse)
+}
+
 func (h *Handler) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		PublicKey string `json:"public_key"`

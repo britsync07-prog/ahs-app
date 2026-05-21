@@ -1,16 +1,13 @@
 package com.vault.auth
 
 object Constants {
-    // CRITICAL: Replace this with the ACTUAL local IP of your computer running the backend
-    // You can find it by running 'ip addr' or 'ifconfig' on Linux/Mac, or 'ipconfig' on Windows.
-    private const val DEFAULT_BACKEND_IP = "192.168.0.181" 
+    // Production Domain
+    private const val PRODUCTION_DOMAIN = "ahs.mayfairmarketing.online"
 
-    private const val BACKEND_PORT = "8080"
-    
-    val BASE_URL = "http://$DEFAULT_BACKEND_IP:$BACKEND_PORT"
+    val BASE_URL = "https://$PRODUCTION_DOMAIN"
     val PAIR_URL = "$BASE_URL/api/vault/pair"
     val PUSH_URL = "$BASE_URL/api/vault/push"
-    val WS_URL = "ws://$DEFAULT_BACKEND_IP:$BACKEND_PORT/api/ws/connect"
+    val WS_URL = "wss://$PRODUCTION_DOMAIN/api/ws/connect"
     
     // Decoy Mode Constants
     const val DECOY_KEY_PLACEHOLDER = "DECOY_MODE_ACTIVE_RANDOM_KEY_REQUIRED"

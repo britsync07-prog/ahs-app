@@ -28,7 +28,7 @@ pub async fn connect_and_register(
     is_onboarded: bool,
     x_secret: x25519_dalek::StaticSecret,
 ) {
-    let url = "ws://localhost:8080/api/ws/connect";
+    let url = crate::config::get_ws_url();
     let mut retry_delay = std::time::Duration::from_secs(1);
 
     println!("Ws: Starting connection loop for pk={} nonce={}", public_key, pairing_nonce);

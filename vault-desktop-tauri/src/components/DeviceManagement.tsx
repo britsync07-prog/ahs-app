@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Smartphone, Monitor, Shield, Trash2, Clock, CheckCircle2 } from "lucide-react";
+import { getBackendUrl } from "../config";
 
 interface Device {
   name: string;
@@ -15,7 +16,7 @@ export const DeviceManagement: React.FC = () => {
 
   const fetchDevices = async () => {
     try {
-      const response = await fetch("http://localhost:8080/api/vault/devices");
+      const response = await fetch(`${getBackendUrl()}/api/vault/devices`);
       if (response.ok) {
         const data = await response.json();
         setDevices(data);
@@ -37,7 +38,7 @@ export const DeviceManagement: React.FC = () => {
     if (!confirm(`Are you sure you want to de-authorize "${name}"? This will immediately revoke access for all sessions matching this device.`)) return;
 
     try {
-      const response = await fetch(`http://localhost:8080/api/vault/devices?public_key=${encodeURIComponent(pk)}&bulk=true`, {
+      const response = await fetch(`${getBackendUrl()}/api/vault/devices?public_key=${encodeURIComponent(pk)}&bulk=true`, {
         method: 'DELETE'
       });
       if (response.ok) {

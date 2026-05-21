@@ -147,7 +147,7 @@ pub fn stream_upload_blob(
 
     let client = reqwest::blocking::Client::new();
     let mut rb = client
-        .post("http://localhost:8080/api/vault/upload")
+        .post(format!("{}/api/vault/upload", crate::config::get_backend_url()))
         .header("Content-Length", size.to_string())
         .header("X-Desktop-PK", pk.clone())
         .header("X-Signature", sig_b64.clone());
@@ -166,7 +166,7 @@ pub fn stream_upload_blob(
             let file = std::fs::File::open(shadow_path).map_err(|e| e.to_string())?;
             let client = reqwest::blocking::Client::new();
             res = client
-                .post("http://localhost:8080/api/vault/upload")
+                .post(format!("{}/api/vault/upload", crate::config::get_backend_url()))
                 .header("Content-Length", size.to_string())
                 .header("X-Desktop-PK", pk)
                 .header("X-Signature", sig_b64)
@@ -212,10 +212,7 @@ pub fn stream_download_blob(
 
     let client = Client::new();
     let mut rb = client
-        .get(format!(
-            "http://localhost:8080/api/vault/download/{}",
-            blob_id
-        ))
+        .get(format!("{}/api/vault/download/{}", crate::config::get_backend_url(), blob_id))
         .header("X-Desktop-PK", pk.clone())
         .header("X-Signature", sig_b64.clone());
     
@@ -235,10 +232,7 @@ pub fn stream_download_blob(
             println!("crypto: Token refreshed successfully. Retrying download...");
             let client = Client::new();
             res = client
-                .get(format!(
-                    "http://localhost:8080/api/vault/download/{}",
-                    blob_id
-                ))
+                .get(format!("{}/api/vault/download/{}", crate::config::get_backend_url(), blob_id))
                 .header("X-Desktop-PK", pk)
                 .header("X-Signature", sig_b64)
                 .header("X-Google-Token", new_token)

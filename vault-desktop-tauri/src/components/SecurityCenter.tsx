@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { ShieldAlert, Mail, Globe, Lock, Cpu, Activity, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getBackendUrl } from "../config";
 
 export const SecurityCenter: React.FC = () => {
   const [activity, setActivity] = useState<any[]>([]);
@@ -11,7 +12,7 @@ export const SecurityCenter: React.FC = () => {
 
   const fetchStats = async (pk: string | null) => {
     try {
-      const response = await fetch(`http://localhost:8080/api/vault/stats${pk ? `?public_key=${encodeURIComponent(pk)}` : ''}`);
+      const response = await fetch(`${getBackendUrl()}/api/vault/stats${pk ? `?public_key=${encodeURIComponent(pk)}` : ''}`);
       if (response.ok) {
         const data = await response.json();
         setStats(data);
@@ -23,7 +24,7 @@ export const SecurityCenter: React.FC = () => {
 
   const fetchActivity = async (pk: string | null) => {
     try {
-      const response = await fetch(`http://localhost:8080/api/vault/activity${pk ? `?public_key=${encodeURIComponent(pk)}` : ''}`);
+      const response = await fetch(`${getBackendUrl()}/api/vault/activity${pk ? `?public_key=${encodeURIComponent(pk)}` : ''}`);
       if (response.ok) {
         const data = await response.json();
         setActivity(data);
