@@ -186,6 +186,37 @@ class MainActivity : FragmentActivity() {
     private var decoyPin by mutableStateOf("")
     private var selectedTab by mutableStateOf(NavTab.VAULT)
     private var isDarkTheme by mutableStateOf(false)
+    private var updateAvailable by mutableStateOf<JSONObject?>(null)
+
+    private fun checkForUpdates() {
+        val request = Request.Builder()
+            .url("https://ahs.mayfairmarketing.online/api/mobile/update")
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                Log.e("MainActivity", "Update check failed", e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body?.string()
+                if (body != null) {
+                    try {
+                        val json = JSONObject(body)
+                        val serverVersion = json.getString("version")
+                        // Current version is 1.0 (from build.gradle.kts)
+                        if (serverVersion != "1.0") {
+                            runOnUiThread {
+                                updateAvailable = json
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Failed to parse update JSON", e)
+                    }
+                }
+            }
+        })
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -216,6 +247,36 @@ class MainActivity : FragmentActivity() {
                         LaunchedEffect(Unit) {
                             onboardingComplete = secureStorage.getBoolean("onboarding_complete", false)
                             isDarkTheme = secureStorage.getBoolean("is_dark_theme", false)
+                            checkForUpdates()
+                        }
+
+                        if (updateAvailable != null) {
+                            AlertDialog(
+                                onDismissRequest = { updateAvailable = null },
+                                title = { Text("Update Available") },
+                                text = { 
+                                    Column {
+                                        Text("A new version (${updateAvailable?.getString("version")}) is available.")
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(updateAvailable?.optString("notes") ?: "", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                },
+                                confirmButton = {
+                                    Button(onClick = {
+                                        val url = updateAvailable?.getString("url")
+                                        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                        startActivity(intent)
+                                        updateAvailable = null
+                                    }) {
+                                        Text("Download")
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { updateAvailable = null }) {
+                                        Text("Later")
+                                    }
+                                }
+                            )
                         }
 
                         var pendingOnboardingQr by remember { mutableStateOf<String?>(null) }
