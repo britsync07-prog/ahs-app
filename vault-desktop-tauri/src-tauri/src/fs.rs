@@ -29,7 +29,6 @@ trait FileExtCross {
 impl FileExtCross for std_fs::File {
     #[cfg(not(windows))]
     fn read_at_cross(&self, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
-        use std::os::unix::fs::FileExt;
         self.read_at(buf, offset)
     }
 
@@ -40,7 +39,6 @@ impl FileExtCross for std_fs::File {
 
     #[cfg(not(windows))]
     fn write_at_cross(&self, buf: &[u8], offset: u64) -> std::io::Result<usize> {
-        use std::os::unix::fs::FileExt;
         self.write_at(buf, offset)
     }
 
