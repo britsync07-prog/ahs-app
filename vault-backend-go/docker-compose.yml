@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: vault-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-vault_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-vault_secret_123}
+      POSTGRES_DB: ${DB_NAME:-vault_metadata}
+    ports:
+      - "5439:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  storage:
+    image: minio/minio
+    container_name: vault-minio
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-minio_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-minio_secret_123}
+    ports:
+      - "9000:9000" # API
+      - "9001:9001" # Console
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+
+volumes:
+  postgres_data:
+  minio_data:

@@ -1,0 +1,32 @@
+# OS files
+.DS_Store
+Thumbs.db
+*.hprof
+
+# Node
+node_modules/
+dist/
+
+# Rust
+target/
+
+# Go
+vault-backend-go/vault-server
+vault-backend-go/main
+vault-backend-go/api
+vault-backend-go/.env
+
+# Android / Mobile
+.gradle/
+local.properties
+**/build/
+.idea/
+*.iml
+captures/
+.externalNativeBuild
+.cxx
+google-services.json
+
+# Environment variables
+.env
+.env.local

@@ -1,0 +1,83 @@
+@import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap");
+
+@theme {
+  --color-pure: var(--bg-pure);
+  --color-matte: var(--bg-matte);
+  --color-matte-lighter: var(--bg-matte-lighter);
+  --color-cyan: var(--accent);
+  --color-emerald: #10B981;
+  --color-red: #EF4444;
+  --color-blue: #3B82F6;
+  --color-amber: #F59E0B;
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-graphite: var(--bg-graphite);
+  --color-border-primary: var(--border-primary);
+}
+
+:root {
+  --bg-pure: #FFFFFF;
+  --bg-matte: #F2F2F7;
+  --bg-matte-lighter: #E5E5EA;
+  --bg-graphite: #D1D1D6;
+  --border-primary: rgba(0, 0, 0, 0.08);
+  --accent: #007AFF;
+  --text-primary: #000000;
+  --text-secondary: #636366;
+  --text-tertiary: #8E8E93;
+
+  font-family: "Manrope", system-ui, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light;
+  color: var(--text-primary);
+  background-color: transparent;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+[data-theme='dark'] {
+  --bg-pure: #000000;
+  --bg-matte: #0A0A0A;
+  --bg-matte-lighter: #141414;
+  --bg-graphite: #1C1C1E;
+  --accent: #00F2FF;
+  --border-primary: rgba(255, 255, 255, 0.08);
+  --text-primary: #FFFFFF;
+  --text-secondary: #8E8E93;
+  --text-tertiary: #48484A;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: transparent;
+  overflow-x: hidden;
+}
+
+.glass {
+  background: var(--bg-matte);
+  opacity: 0.7;
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--text-primary);
+}
+
+.liquid-glass {
+  background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 100%);
+  backdrop-filter: blur(40px);
+  border: 1px solid var(--text-primary);
+}
+
+code,
+pre,
+textarea {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
