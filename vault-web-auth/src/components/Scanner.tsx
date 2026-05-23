@@ -135,6 +135,9 @@ export const Scanner = ({ onScan, onClose }: ScannerProps) => {
           object-fit: cover !important;
           width: 100% !important;
           height: 100% !important;
+          /* Critical for iOS Safari to allow inline playback */
+          -webkit-playsinline: true;
+          playsinline: true;
         }
         @keyframes scan {
           0% { transform: translateY(0); }

@@ -42,23 +42,36 @@ export function useWebAuthn() {
 
   const authenticateBiometric = useCallback(async () => {
     if (!window.PublicKeyCredential) {
-      throw new Error('WebAuthn is not supported in this browser.');
+      throw new Error('Biometric authentication is not supported on this device/browser.');
     }
 
-    const challenge = window.crypto.getRandomValues(new Uint8Array(32));
+    try {
+      // Check if platform authenticator is available (FaceID/TouchID)
+      const isAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      if (!isAvailable) {
+        throw new Error('Face ID or Touch ID is not available or enabled on this device.');
+      }
 
-    const requestOptions: PublicKeyCredentialRequestOptions = {
-      challenge,
-      rpId: window.location.hostname,
-      userVerification: 'required',
-      timeout: 60000,
-    };
+      const challenge = window.crypto.getRandomValues(new Uint8Array(32));
 
-    const assertion = (await navigator.credentials.get({
-      publicKey: requestOptions,
-    })) as PublicKeyCredential;
+      const requestOptions: PublicKeyCredentialRequestOptions = {
+        challenge,
+        rpId: window.location.hostname,
+        userVerification: 'required',
+        timeout: 60000,
+      };
 
-    return assertion;
+      const assertion = (await navigator.credentials.get({
+        publicKey: requestOptions,
+      })) as PublicKeyCredential;
+
+      return assertion;
+    } catch (err: any) {
+      if (err.name === 'NotAllowedError') {
+        throw new Error('Authentication cancelled or biometric data not recognized.');
+      }
+      throw err;
+    }
   }, []);
 
   return { registerBiometric, authenticateBiometric };
