@@ -37,9 +37,9 @@ export const Scanner = ({ onScan, onClose }: ScannerProps) => {
           aspectRatio: 1.0,
         },
         (decodedText) => {
-          html5QrCode.stop().then(() => {
-            onScan(decodedText);
-          }).catch(console.error);
+          console.log('QR Code detected:', decodedText);
+          onScan(decodedText);
+          html5QrCode.stop().catch(console.error);
         },
         () => {} // silent error for frame scanning
       );

@@ -125,19 +125,32 @@ function App() {
   };
 
   const handleScan = async (decodedText: string) => {
+    console.log('Scanner detected text:', decodedText);
     setState('main');
     setIsProcessing(true);
     try {
-      const payload = JSON.parse(decodedText);
+      let payload;
+      try {
+        payload = JSON.parse(decodedText);
+      } catch (e) {
+        throw new Error('Invalid QR code format. Not a valid JSON payload.');
+      }
+
+      console.log('Parsed QR payload:', payload);
       const { backend_url, desktop_public_key, desktop_x_public_key, pairing_nonce } = payload;
       
       const identityPriv = await db.getIdentityPrivateKey();
       const xPriv = await db.getXPrivateKey();
       
-      if (!identityPK || !identityPriv || !xPriv) throw new Error('Identity not found');
+      if (!identityPK || !identityPriv || !xPriv) {
+        console.error('Keys missing:', { identityPK: !!identityPK, identityPriv: !!identityPriv, xPriv: !!xPriv });
+        throw new Error('Local security identity not found. Please regenerate identity in Settings.');
+      }
 
+      console.log('Signing pairing request...');
       const signature = await crypto.signData(identityPriv, pairing_nonce);
       
+      console.log('Sending pairing request to backend:', backend_url);
       const result = await pairDevice(
         backend_url,
         desktop_public_key,
@@ -146,6 +159,8 @@ function App() {
         pairing_nonce,
         signature
       );
+
+      console.log('Pairing successful result:', result);
 
       const newPairingData: PairingData = {
         backend_url,
@@ -159,12 +174,14 @@ function App() {
       setVaultStatus('Locked');
       
       if (result.encrypted_master_key) {
+        console.log('Master key found in pairing result, decrypting...');
         const masterKey = await crypto.decryptMasterKey(result.encrypted_master_key, xPriv);
         await db.saveMasterKey(masterKey);
+        console.log('Master key saved.');
       }
     } catch (err: any) {
-      console.error('Pairing failed', err);
-      alert(`Pairing failed: ${err.message || 'Unknown error'}\n\nCheck if your backend is accessible and your computer is connected to the same network if using a local URL.`);
+      console.error('Pairing failed:', err);
+      alert(`Pairing failed: ${err.message || 'Unknown error'}\n\nCheck if your backend is accessible at the URL shown in the logs.`);
     } finally {
       setIsProcessing(false);
     }
