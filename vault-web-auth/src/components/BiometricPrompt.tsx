@@ -12,14 +12,14 @@ export const BiometricPrompt: React.FC<BiometricPromptProps> = ({ onApprove, onD
     <div className="fixed inset-0 z-[100] flex items-center justify-center px-6">
       {/* Cinematic backdrop */}
       <div 
-        className="absolute inset-0 bg-black/80 backdrop-blur-md animate-in fade-in duration-500" 
+        className="absolute inset-0 bg-black/40 backdrop-blur-md animate-in fade-in duration-500" 
         onClick={onDeny}
       />
       
-      <div className="relative w-full max-w-sm glass-dark rounded-[40px] p-8 shadow-2xl border border-white/10 animate-in zoom-in-95 duration-300 flex flex-col items-center">
+      <div className="relative w-full max-w-sm glass rounded-[40px] p-8 shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col items-center">
         <button 
           onClick={onDeny}
-          className="absolute top-6 right-6 p-2 text-white/40 hover:text-white transition-colors"
+          className="absolute top-6 right-6 p-2 text-text-secondary hover:text-text-primary transition-colors"
         >
           <X size={20} />
         </button>
@@ -37,18 +37,18 @@ export const BiometricPrompt: React.FC<BiometricPromptProps> = ({ onApprove, onD
           </div>
         </div>
 
-        <h2 className="text-2xl font-bold text-center mb-2">Biometric Unlock</h2>
-        <p className="text-white/50 text-center mb-8 text-sm px-4">
+        <h2 className="text-2xl font-bold text-center mb-2 text-text-primary">Biometric Unlock</h2>
+        <p className="text-text-secondary text-center mb-8 text-sm px-4">
           Confirm your identity to authorize the vault unlock request for your workstation.
         </p>
 
         <button
           onClick={onApprove}
           disabled={loading}
-          className="w-full h-16 bg-white text-black rounded-2xl font-bold text-lg active:scale-95 transition-all flex items-center justify-center space-x-2 shadow-[0_0_30px_rgba(255,255,255,0.1)] hover:bg-neon-cyan hover:shadow-neon-glow"
+          className="w-full h-16 bg-text-primary text-background rounded-2xl font-bold text-lg active:scale-95 transition-all flex items-center justify-center space-x-2 shadow-xl hover:bg-neon-cyan hover:text-black hover:shadow-neon-glow"
         >
           {loading ? (
-            <div className="w-6 h-6 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-background/30 border-t-background rounded-full animate-spin" />
           ) : (
             <span>Confirm Identity</span>
           )}
@@ -56,7 +56,7 @@ export const BiometricPrompt: React.FC<BiometricPromptProps> = ({ onApprove, onD
         
         <button
           onClick={onDeny}
-          className="mt-4 text-white/40 text-sm font-medium hover:text-white transition-colors"
+          className="mt-4 text-text-secondary text-sm font-medium hover:text-text-primary transition-colors"
         >
           Cancel Request
         </button>

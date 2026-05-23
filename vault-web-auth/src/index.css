@@ -1,17 +1,33 @@
 @import "tailwindcss";
 
 :root {
-  --background: #000000;
-  --surface: #0D0D12;
+  --background: #F2F2F7;
+  --surface: #FFFFFF;
+  --text: #000000;
+  --text-secondary: #636366;
+  --border: #D1D1D6;
   --primary: #00f3ff;
   --success: #10b981;
   --danger: #ef4444;
   --blue: #2563eb;
+  --nav-bg: rgba(255, 255, 255, 0.8);
+}
+
+.dark {
+  --background: #000000;
+  --surface: #121212;
+  --text: #F2F2F7;
+  --text-secondary: #8E8E93;
+  --border: #333333;
+  --nav-bg: rgba(13, 13, 18, 0.8);
 }
 
 @theme {
   --color-background: var(--background);
   --color-surface: var(--surface);
+  --color-text-primary: var(--text);
+  --color-text-secondary: var(--text-secondary);
+  --color-border-subtle: var(--border);
   --color-neon-cyan: var(--primary);
   --color-emerald-green: var(--success);
   --color-deep-red: var(--danger);
@@ -19,29 +35,31 @@
 }
 
 body {
-  @apply bg-background text-white font-sans antialiased;
+  @apply bg-background text-text-primary font-sans antialiased transition-colors duration-300;
   background-color: var(--background);
 }
 
 @layer components {
   .glass {
-    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+    @apply backdrop-blur-xl border border-border-subtle;
+    background-color: var(--nav-bg);
   }
   
-  .glass-dark {
-    @apply bg-black/40 backdrop-blur-2xl border border-white/5;
+  .card-base {
+    @apply rounded-3xl border border-border-subtle shadow-sm transition-all duration-300;
+    background-color: var(--surface);
+  }
+
+  .dark .card-base {
+    @apply border-white/5 shadow-2xl;
   }
 
   .neon-glow {
     box-shadow: 0 0 15px rgba(0, 243, 255, 0.3);
   }
-
-  .neon-border {
-    @apply border border-neon-cyan/30;
-  }
 }
 
-/* Custom scrollbar for a polished look */
+/* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -51,9 +69,9 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-white/10 rounded-full;
+  @apply bg-text-secondary/20 rounded-full;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-white/20;
+  @apply bg-text-secondary/40;
 }

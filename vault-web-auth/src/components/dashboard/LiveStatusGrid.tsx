@@ -14,13 +14,13 @@ export const LiveStatusGrid: React.FC = () => {
       {stats.map((stat) => {
         const Icon = stat.icon;
         return (
-          <div key={stat.label} className="glass-dark rounded-[28px] p-5 border border-white/5 flex flex-col gap-3">
-            <div className={`w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center border border-white/10 ${stat.color}`}>
+          <div key={stat.label} className="card-base p-5 flex flex-col gap-3">
+            <div className={`w-10 h-10 rounded-2xl bg-text-secondary/5 flex items-center justify-center border border-border-subtle ${stat.color}`}>
               <Icon size={20} />
             </div>
             <div>
-              <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest">{stat.label}</p>
-              <p className="text-lg font-bold text-white/90">{stat.value}</p>
+              <p className="text-[10px] font-bold text-text-secondary uppercase tracking-widest opacity-60">{stat.label}</p>
+              <p className="text-lg font-bold text-text-primary">{stat.value}</p>
             </div>
           </div>
         );

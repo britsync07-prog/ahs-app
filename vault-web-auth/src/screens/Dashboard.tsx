@@ -30,7 +30,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className={`absolute -inset-1 rounded-full blur-[4px] ${isConnected ? 'bg-emerald-green/40' : 'bg-deep-red/40'}`} />
             <div className={`relative w-2.5 h-2.5 rounded-full ${isConnected ? 'bg-emerald-green' : 'bg-deep-red'}`} />
           </div>
-          <h1 className="text-xl font-black tracking-tight flex items-center gap-2">
+          <h1 className="text-xl font-black tracking-tight flex items-center gap-2 text-text-primary">
             SECURE <span className="text-neon-cyan">VAULT</span>
           </h1>
         </div>
@@ -43,7 +43,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           )}
           <button 
             onClick={onClear}
-            className="p-2 glass rounded-xl text-white/40 hover:text-white transition-colors"
+            className="p-2 rounded-xl text-text-secondary hover:text-text-primary transition-colors bg-text-secondary/5 border border-border-subtle"
           >
             <LogOut size={18} />
           </button>
@@ -55,7 +55,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <SecurityHeroCard status={status} />
         
         <div className="space-y-4">
-          <h3 className="text-[10px] font-black text-white/30 uppercase tracking-[0.3em] px-2">
+          <h3 className="text-[10px] font-black text-text-secondary uppercase tracking-[0.3em] px-2 opacity-50">
             Quick Actions
           </h3>
           <QuickActionButtons 
@@ -68,10 +68,24 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
         <div className="space-y-4">
-          <h3 className="text-[10px] font-black text-white/30 uppercase tracking-[0.3em] px-2">
+          <h3 className="text-[10px] font-black text-text-secondary uppercase tracking-[0.3em] px-2 opacity-50">
             Live Monitoring
           </h3>
           <LiveStatusGrid />
+        </div>
+
+        <div className="space-y-4">
+          <h3 className="text-[10px] font-black text-text-secondary uppercase tracking-[0.3em] px-2 opacity-50">
+            Recent Activity
+          </h3>
+          <div className="card-base p-6 border-dashed border-border-subtle bg-text-secondary/5">
+            <div className="flex items-center gap-4">
+              <div className="w-1.5 h-1.5 rounded-full bg-neon-cyan animate-pulse" />
+              <p className="text-sm font-medium text-text-primary">
+                MacBook Pro unlocked via Biometrics • 2m ago
+              </p>
+            </div>
+          </div>
         </div>
       </div>
     </div>

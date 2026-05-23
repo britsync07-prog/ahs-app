@@ -27,6 +27,15 @@ function App() {
   const [biometricPending, setBiometricPending] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<'Locked' | 'Unlocked' | 'Unpaired'>('Unpaired');
+  const [isDarkTheme, setIsDarkTheme] = useState(false);
+
+  useEffect(() => {
+    if (isDarkTheme) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkTheme]);
 
   const { isConnected, lastMessage } = useWebSocket(
     pairingData?.backend_url || null,
@@ -169,7 +178,7 @@ function App() {
 
   if (state === 'onboarding') {
     return (
-      <div className="min-h-screen bg-black text-white flex flex-col p-8 font-sans transition-all duration-500">
+      <div className="min-h-screen bg-background text-text-primary flex flex-col p-8 font-sans transition-all duration-500">
         <div className="flex-1 flex flex-col items-center justify-center space-y-12">
           {onboardingStep === 0 && (
             <div className="text-center space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
@@ -179,7 +188,7 @@ function App() {
               </div>
               <div className="space-y-4">
                 <h1 className="text-4xl font-black tracking-tight">Privacy First.</h1>
-                <p className="text-white/40 text-lg max-w-xs mx-auto">Your encryption keys never leave your device. Fully hardware-backed security.</p>
+                <p className="text-text-secondary text-lg max-w-xs mx-auto">Your encryption keys never leave your device. Fully hardware-backed security.</p>
               </div>
             </div>
           )}
@@ -187,18 +196,18 @@ function App() {
           {onboardingStep === 1 && (
             <div className="text-center space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
               <div className="flex justify-center gap-4">
-                <div className="p-6 glass rounded-3xl border border-white/5 flex flex-col items-center space-y-2">
+                <div className="p-6 glass rounded-3xl border border-border-subtle flex flex-col items-center space-y-2">
                   <Shield size={32} className="text-neon-cyan" />
-                  <span className="text-[10px] font-bold text-white/30 uppercase tracking-widest">Mobile</span>
+                  <span className="text-[10px] font-bold text-text-secondary uppercase tracking-widest">Mobile</span>
                 </div>
-                <div className="p-6 glass rounded-3xl border border-white/5 flex flex-col items-center space-y-2">
+                <div className="p-6 glass rounded-3xl border border-border-subtle flex flex-col items-center space-y-2">
                   <Shield size={32} className="text-neon-cyan/40" />
-                  <span className="text-[10px] font-bold text-white/30 uppercase tracking-widest">Desktop</span>
+                  <span className="text-[10px] font-bold text-text-secondary uppercase tracking-widest">Desktop</span>
                 </div>
               </div>
               <div className="space-y-4">
                 <h1 className="text-4xl font-black tracking-tight">Magic Pairing.</h1>
-                <p className="text-white/40 text-lg max-w-xs mx-auto">Scan a QR code on your workstation to securely link your devices in seconds.</p>
+                <p className="text-text-secondary text-lg max-w-xs mx-auto">Scan a QR code on your workstation to securely link your devices in seconds.</p>
               </div>
             </div>
           )}
@@ -211,7 +220,7 @@ function App() {
               </div>
               <div className="space-y-4">
                 <h1 className="text-4xl font-black tracking-tight">Identity.</h1>
-                <p className="text-white/40 text-lg max-w-xs mx-auto">Generate your unique cryptographic identity. Protected by your biometrics.</p>
+                <p className="text-text-secondary text-lg max-w-xs mx-auto">Generate your unique cryptographic identity. Protected by your biometrics.</p>
               </div>
             </div>
           )}
@@ -220,7 +229,7 @@ function App() {
         <div className="space-y-6">
           <div className="flex justify-center space-x-2">
             {[0, 1, 2].map(i => (
-              <div key={i} className={`h-1.5 rounded-full transition-all duration-300 ${onboardingStep === i ? 'w-8 bg-neon-cyan shadow-[0_0_8px_rgba(0,243,255,0.5)]' : 'w-2 bg-white/10'}`}></div>
+              <div key={i} className={`h-1.5 rounded-full transition-all duration-300 ${onboardingStep === i ? 'w-8 bg-neon-cyan shadow-[0_0_8px_rgba(0,243,255,0.5)]' : 'w-2 bg-text-secondary/20'}`}></div>
             ))}
           </div>
           
@@ -241,7 +250,7 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white font-sans flex flex-col overflow-hidden">
+    <div className="min-h-screen bg-background text-text-primary font-sans flex flex-col overflow-hidden transition-colors duration-300">
       {/* Content Rendering based on Tab */}
       <div className="flex-1 flex flex-col overflow-y-auto pb-32">
         {activeTab === 'vault' && (
@@ -260,15 +269,20 @@ function App() {
         )}
         {activeTab === 'shield' && <ShieldScreen />}
         {activeTab === 'activity' && <ActivityScreen />}
-        {activeTab === 'settings' && <SettingsScreen />}
+        {activeTab === 'settings' && (
+          <SettingsScreen 
+            isDarkTheme={isDarkTheme}
+            onThemeToggle={() => setIsDarkTheme(!isDarkTheme)}
+          />
+        )}
         {activeTab === 'devices' && (
           <div className="flex-1 p-6 space-y-8 animate-in fade-in duration-500">
             <header className="pt-4">
               <h1 className="text-3xl font-black tracking-tight">DEVICES</h1>
-              <p className="text-white/40 text-sm">Manage paired workstations.</p>
+              <p className="text-text-secondary text-sm">Manage paired workstations.</p>
             </header>
-            <div className="glass-dark rounded-[32px] p-6 border border-white/5">
-              <p className="text-white/40 text-center italic py-8">No secondary devices paired.</p>
+            <div className="glass rounded-[32px] p-6 border border-border-subtle">
+              <p className="text-text-secondary text-center italic py-8">No secondary devices paired.</p>
             </div>
           </div>
         )}
@@ -293,13 +307,13 @@ function App() {
       )}
 
       {isProcessing && !biometricPending && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="glass-dark border border-white/10 p-8 rounded-[40px] flex flex-col items-center space-y-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="glass border border-border-subtle p-8 rounded-[40px] flex flex-col items-center space-y-4">
             <div className="relative">
               <div className="absolute inset-0 bg-neon-cyan/20 rounded-full blur-xl animate-pulse" />
               <RefreshCw className="text-neon-cyan animate-spin relative" size={40} />
             </div>
-            <p className="text-sm font-black tracking-[0.2em] uppercase text-white/60">Securing...</p>
+            <p className="text-sm font-black tracking-[0.2em] uppercase text-text-secondary">Securing...</p>
           </div>
         </div>
       )}
