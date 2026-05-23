@@ -32,7 +32,7 @@ export function useWebSocket(url: string | null, publicKey: string | null) {
         console.log('WebSocket message received:', message);
         
         if (message.type === 'push_relay') {
-          setLastMessage(message.data);
+          setLastMessage(message.encrypted_blob);
         }
       } catch (err) {
         console.error('Failed to parse WebSocket message', err);

@@ -57,7 +57,55 @@ export async function signData(privateKey: CryptoKey, data: string | Uint8Array)
     dataToSign as any
   );
 
-  return arrayBufferToBase64(signature);
+  // WebCrypto returns IEEE P1363 format (raw r and s concatenated).
+  // Go backend expects ASN.1 DER format.
+  const asn1Sig = ieeeToAsn1(new Uint8Array(signature));
+  return uint8ArrayToBase64(asn1Sig);
+}
+
+/**
+ * Converts an IEEE P1363 ECDSA signature (raw r|s) to ASN.1 DER format.
+ * Essential for Go/OpenSSL compatibility.
+ */
+function ieeeToAsn1(ieeeSig: Uint8Array): Uint8Array {
+  const r = ieeeSig.slice(0, ieeeSig.length / 2);
+  const s = ieeeSig.slice(ieeeSig.length / 2);
+
+  const toAsn1Int = (bytes: Uint8Array) => {
+    // Remove leading zeros
+    let pos = 0;
+    while (pos < bytes.length && bytes[pos] === 0) pos++;
+    
+    let result = bytes.slice(pos);
+    // If MSB is set, prepend 0x00 to keep it positive in ASN.1
+    if (result.length > 0 && result[0] >= 0x80) {
+      const padded = new Uint8Array(result.length + 1);
+      padded.set(result, 1);
+      result = padded;
+    } else if (result.length === 0) {
+      result = new Uint8Array([0]);
+    }
+    return result;
+  };
+
+  const rDer = toAsn1Int(r);
+  const sDer = toAsn1Int(s);
+
+  // Construct Sequence: 0x30 [len] 0x02 [rLen] [r] 0x02 [sLen] [s]
+  const payload = new Uint8Array(rDer.length + sDer.length + 4);
+  payload[0] = 0x02;
+  payload[1] = rDer.length;
+  payload.set(rDer, 2);
+  payload[rDer.length + 2] = 0x02;
+  payload[rDer.length + 3] = sDer.length;
+  payload.set(sDer, rDer.length + 4);
+
+  const der = new Uint8Array(payload.length + 2);
+  der[0] = 0x30;
+  der[1] = payload.length;
+  der.set(payload, 2);
+
+  return der;
 }
 
 // --- X25519 & AES-GCM ---

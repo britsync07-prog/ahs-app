@@ -63,14 +63,39 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (lastMessage && typeof lastMessage === 'object') {
-      const msg = lastMessage as any;
-      if (msg.action === 'WAKE_UP_BIOMETRIC') {
+    if (!lastMessage) return;
+
+    async function handleMessage() {
+      if (lastMessage === 'WAKE_UP_BIOMETRIC') {
         setBiometricPending(true);
-      } else if (msg.action === 'VAULT_STATUS_CHANGE') {
-        setVaultStatus(msg.status);
+        return;
+      }
+
+      // Check if it's an encrypted master key push (long base64 string)
+      if (typeof lastMessage === 'string' && lastMessage.length > 50) {
+        try {
+          const xPriv = await db.getXPrivateKey();
+          if (xPriv) {
+            const masterKey = await crypto.decryptMasterKey(lastMessage, xPriv);
+            await db.saveMasterKey(masterKey);
+            setVaultStatus('Locked');
+            console.log('Master key received and saved.');
+          }
+        } catch (err) {
+          console.error('Failed to decrypt pushed master key', err);
+        }
+      }
+
+      // Handle other object-based messages if any
+      if (typeof lastMessage === 'object') {
+        const msg = lastMessage as any;
+        if (msg.action === 'VAULT_STATUS_CHANGE') {
+          setVaultStatus(msg.status);
+        }
       }
     }
+
+    handleMessage();
   }, [lastMessage]);
 
   const handleOnboardingNext = async () => {
@@ -137,8 +162,9 @@ function App() {
         const masterKey = await crypto.decryptMasterKey(result.encrypted_master_key, xPriv);
         await db.saveMasterKey(masterKey);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Pairing failed', err);
+      alert(`Pairing failed: ${err.message || 'Unknown error'}\n\nCheck if your backend is accessible and your computer is connected to the same network if using a local URL.`);
     } finally {
       setIsProcessing(false);
     }
@@ -167,8 +193,9 @@ function App() {
 
       setBiometricPending(false);
       setVaultStatus('Unlocked');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Unlock failed', err);
+      alert(`Unlock failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsProcessing(false);
     }
