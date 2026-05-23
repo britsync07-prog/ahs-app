@@ -90,6 +90,10 @@ class VaultDB {
     return this.get<string>('master_key');
   }
 
+  async getPinHash(): Promise<string | null> {
+    return this.get<string>('pin_hash');
+  }
+
   async getPairingData(): Promise<PairingData | null> {
     return this.get<PairingData>('pairing_data');
   }
@@ -97,6 +101,10 @@ class VaultDB {
   async saveIdentity(publicKey: string, privateKey: CryptoKey): Promise<void> {
     await this.set('identity_public_key', publicKey);
     await this.set('identity_private_key', privateKey);
+  }
+
+  async savePinHash(hash: string): Promise<void> {
+    await this.set('pin_hash', hash);
   }
 
   async saveXPrivateKey(privateKey: string): Promise<void> {
