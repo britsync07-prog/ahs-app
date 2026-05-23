@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+:root {
+  --background: #000000;
+  --surface: #0D0D12;
+  --primary: #00f3ff;
+  --success: #10b981;
+  --danger: #ef4444;
+  --blue: #2563eb;
+}
+
+@theme {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-neon-cyan: var(--primary);
+  --color-emerald-green: var(--success);
+  --color-deep-red: var(--danger);
+  --color-electric-blue: var(--blue);
+}
+
+body {
+  @apply bg-background text-white font-sans antialiased;
+  background-color: var(--background);
+}
+
+@layer components {
+  .glass {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+  }
+  
+  .glass-dark {
+    @apply bg-black/40 backdrop-blur-2xl border border-white/5;
+  }
+
+  .neon-glow {
+    box-shadow: 0 0 15px rgba(0, 243, 255, 0.3);
+  }
+
+  .neon-border {
+    @apply border border-neon-cyan/30;
+  }
+}
+
+/* Custom scrollbar for a polished look */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-white/10 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-white/20;
+}

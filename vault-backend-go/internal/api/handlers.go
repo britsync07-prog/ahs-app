@@ -107,6 +107,18 @@ func (h *Handler) GetActivity(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(userLogs)
 }
 
+func (h *Handler) HandleMobileUpdate(w http.ResponseWriter, r *http.Request) {
+	updateResponse := map[string]interface{}{
+		"version":  "1.1", // Current production version
+		"notes":    "Production release with automated update check.",
+		"pub_date": "2026-05-22T10:00:00Z",
+		"url":      "https://github.com/britsync07-prog/ahs-app/releases/latest/download/vault-mobile-auth.apk",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(updateResponse)
+}
+
 func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	// In a real production app, you might query GitHub API to get the latest release.
 	// For now, we return a structured JSON that Tauri expects.

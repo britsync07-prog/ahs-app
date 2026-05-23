@@ -35,6 +35,7 @@ func NewRouter(h *Handler) *chi.Mux {
 
 	r.Get("/health", h.HealthCheck)
 	r.Get("/api/update", h.HandleUpdate)
+	r.Get("/api/mobile/update", h.HandleMobileUpdate)
 
 	r.Route("/api/vault", func(r chi.Router) {
 		r.Post("/upload", h.UploadVault)

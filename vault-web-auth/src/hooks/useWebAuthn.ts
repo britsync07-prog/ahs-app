@@ -1,0 +1,65 @@
+import { useCallback } from 'react';
+
+export function useWebAuthn() {
+  const registerBiometric = useCallback(async (username: string) => {
+    if (!window.PublicKeyCredential) {
+      throw new Error('WebAuthn is not supported in this browser.');
+    }
+
+    const challenge = window.crypto.getRandomValues(new Uint8Array(32));
+    const userID = window.crypto.getRandomValues(new Uint8Array(16));
+
+    const creationOptions: PublicKeyCredentialCreationOptions = {
+      challenge,
+      rp: {
+        name: 'Secure Vault',
+        id: window.location.hostname,
+      },
+      user: {
+        id: userID,
+        name: username,
+        displayName: username,
+      },
+      pubKeyCredParams: [
+        {
+          type: 'public-key',
+          alg: -7, // ES256
+        },
+      ],
+      authenticatorSelection: {
+        authenticatorAttachment: 'platform', // TouchID, FaceID, Windows Hello
+        userVerification: 'required',
+      },
+      timeout: 60000,
+    };
+
+    const credential = (await navigator.credentials.create({
+      publicKey: creationOptions,
+    })) as PublicKeyCredential;
+
+    return credential;
+  }, []);
+
+  const authenticateBiometric = useCallback(async () => {
+    if (!window.PublicKeyCredential) {
+      throw new Error('WebAuthn is not supported in this browser.');
+    }
+
+    const challenge = window.crypto.getRandomValues(new Uint8Array(32));
+
+    const requestOptions: PublicKeyCredentialRequestOptions = {
+      challenge,
+      rpId: window.location.hostname,
+      userVerification: 'required',
+      timeout: 60000,
+    };
+
+    const assertion = (await navigator.credentials.get({
+      publicKey: requestOptions,
+    })) as PublicKeyCredential;
+
+    return assertion;
+  }, []);
+
+  return { registerBiometric, authenticateBiometric };
+}
