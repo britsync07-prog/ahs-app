@@ -30,29 +30,7 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		// Native desktop clients (tokio-tungstenite) usually do not send Origin.
-		// Allow empty Origin so local desktop-to-backend WS can connect.
-		origin := strings.TrimSpace(r.Header.Get("Origin"))
-		if origin == "" {
-			return true
-		}
-
-		allowed := strings.Split(os.Getenv("WS_ALLOWED_ORIGINS"), ",")
-		if len(allowed) == 1 && strings.TrimSpace(allowed[0]) == "" {
-			allowed = []string{
-				"http://localhost:1420",
-				"http://127.0.0.1:1420",
-				"tauri://localhost",
-				"http://tauri.localhost",
-				"https://ahs.mayfairmarketing.online",
-			}
-		}
-		for _, a := range allowed {
-			if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(a)), []byte(origin)) == 1 {
-				return true
-			}
-		}
-		return false
+		return true
 	},
 }
 
