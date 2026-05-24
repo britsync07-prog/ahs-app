@@ -68,18 +68,20 @@ function App() {
       if (!pk) {
         setState('onboarding');
         // NATIVE MIRROR: Generate identity key pair immediately on launch/onboarding start
-        try {
-          const { publicKey, privateKey } = await crypto.generateIdentity();
-          const { privateKey: xPriv } = crypto.generateX25519KeyPair();
-          const pkB64 = await crypto.exportPublicKey(publicKey);
-          const xPrivB64 = crypto.uint8ArrayToBase64(xPriv);
-          await db.saveIdentity(pkB64, privateKey);
-          await db.saveXPrivateKey(xPrivB64);
-          setIdentityPK(pkB64);
-          console.log('Hardware identity generated on launch.');
-        } catch (e) {
-          console.error('Initial identity generation failed', e);
-        }
+        (async () => {
+          try {
+            const { publicKey, privateKey } = await crypto.generateIdentity();
+            const { privateKey: xPriv } = crypto.generateX25519KeyPair();
+            const pkB64 = await crypto.exportPublicKey(publicKey);
+            const xPrivB64 = crypto.uint8ArrayToBase64(xPriv);
+            await db.saveIdentity(pkB64, privateKey);
+            await db.saveXPrivateKey(xPrivB64);
+            setIdentityPK(pkB64);
+            console.log('Hardware identity generated on launch.');
+          } catch (e) {
+            console.error('Initial identity generation failed', e);
+          }
+        })();
       } else if (!pin) {
         setState('security-setup');
       } else {
@@ -273,19 +275,25 @@ function App() {
     const biometricsReady = await db.isBiometricsEnabled();
     const credentialId = await db.getBiometricCredentialId();
     
+    // NATIVE MIRROR: If biometrics aren't ready, we don't even try - go straight to PIN.
     if (!biometricsReady || !credentialId) {
-      console.log('Biometrics not ready, showing PIN fallback.');
+      console.log('Biometrics not enrolled. Switching to PIN pad.');
       setShowPinFallback(true);
       return;
     }
 
-    // Trigger biometric as directly as possible from the user gesture
+    setIsProcessing(true);
     try {
+      // Direct, targeted call using the saved credentialId
       await authenticateBiometric(credentialId);
       setIsAppLocked(false);
-    } catch (err) {
-      console.warn('App lock biometric failed, showing PIN fallback');
+      setShowPinFallback(false);
+    } catch (err: any) {
+      console.error('App lock biometric failed:', err);
+      // Fallback instantly if cancelled or errored
       setShowPinFallback(true);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -294,7 +302,10 @@ function App() {
     try {
       const storedHash = await db.getPinHash();
       const saltB64 = await db.getPinSalt();
-      if (!storedHash || !saltB64) return;
+      if (!storedHash || !saltB64) {
+        alert('Security state invalid. Please Reset All Data.');
+        return;
+      }
       
       const salt = crypto.base64ToUint8Array(saltB64);
       const pinHash = await crypto.hashPin(pin, salt);
@@ -306,9 +317,6 @@ function App() {
         const decoyHash = await db.getDecoyPinHash();
         if (decoyHash && pinHash === decoyHash) {
           console.warn('DECOY PIN ENTERED');
-          // In a real app we'd load decoy data or enter a decoy state.
-          // For now, we unlock but maybe don't load real vault keys.
-          // To keep it simple, we just unlock.
           setIsAppLocked(false);
           setShowPinFallback(false);
         } else {
@@ -323,7 +331,6 @@ function App() {
   const handleApproveUnlock = async () => {
     if (!pairingData || !identityPK) return;
     
-    // Check if biometrics were ever successfully enrolled
     const biometricsReady = await db.isBiometricsEnabled();
     const credentialId = await db.getBiometricCredentialId();
 
@@ -335,13 +342,10 @@ function App() {
 
     setIsProcessing(true);
     try {
-      // 1. Try Biometric First (Exactly like native 'authenticateForUnlock')
       await authenticateBiometric(credentialId);
-      // 2. Success: Finish handshake
       await finishUnlockApproval(pairingData.pairing_nonce, pairingData.desktop_public_key);
     } catch (err: any) {
-      // 3. Failure: Show PIN Fallback (Exactly like native's intended fallback)
-      console.warn('Biometric auth failed or cancelled, showing PIN fallback.');
+      console.warn('Biometric auth failed, showing PIN fallback.');
       setShowPinFallback(true);
       setBiometricPending(false);
     } finally {
@@ -617,6 +621,10 @@ function App() {
         <BiometricPrompt 
           onApprove={handleApproveUnlock}
           onDeny={() => {
+            setBiometricPending(false);
+            setShowPinFallback(true);
+          }}
+          onPinFallback={() => {
             setBiometricPending(false);
             setShowPinFallback(true);
           }}
