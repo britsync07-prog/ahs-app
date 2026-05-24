@@ -20,10 +20,27 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ isDarkTheme, onThemeTo
   const handleRegisterBiometrics = async () => {
     setIsRegistering(true);
     try {
-      const credentialId = await registerBiometric('User');
-      if (credentialId) {
-        await db.setBiometricCredentialId(credentialId);
+      const biometricData = await registerBiometric('User');
+      if (biometricData) {
+        await db.setBiometricCredentialId(biometricData.id);
+        await db.setBiometricPublicKey(biometricData.publicKey);
         await db.setBiometricsEnabled(true);
+        
+        // Notify backend of the new hardware key link (Mirrors native binding)
+        const identityPK = await db.getIdentityPublicKey();
+        const pairingData = await db.getPairingData();
+        if (identityPK && pairingData) {
+          await fetch(`${pairingData.backend_url}/api/web/register-webauthn`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mobile_public_key: identityPK,
+              webauthn_id: biometricData.id,
+              webauthn_pubkey: biometricData.publicKey,
+            }),
+          });
+        }
+
         setBiometricsEnabled(true);
         alert('Biometrics successfully registered!');
       }

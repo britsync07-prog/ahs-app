@@ -1,12 +1,30 @@
+/**
+ * API Service for Vault Authentication.
+ * Sourced from proven patterns for cross-platform WebAuthn/Mobile parity.
+ */
+
+export interface WebAuthnAssertion {
+  id: string;
+  rawId: string;
+  response: {
+    authenticatorData: string;
+    clientDataJSON: string;
+    signature: string;
+    userHandle?: string;
+  };
+  type: string;
+}
+
 export async function pairDevice(
   backendUrl: string,
   desktopPK: string,
   mobilePK: string,
   mobileXPK: string,
   nonce: string,
-  signature: string
+  signature: string,
+  webauthnResponse?: any
 ) {
-  const response = await fetch(`${backendUrl}/api/vault/pair`, {
+  const response = await fetch(`${backendUrl}/api/web/pair`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -15,36 +33,14 @@ export async function pairDevice(
       mobile_x_public_key: mobileXPK,
       pairing_nonce: nonce,
       signature: signature,
+      webauthn_response: webauthnResponse, // NEW: Full WebAuthn assertion
+      os_info: navigator.userAgent
     }),
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Pairing failed: ${error}`);
-  }
-
-  return await response.json();
-}
-
-export async function registerDevice(
-  backendUrl: string,
-  publicKey: string,
-  name: string,
-  os: string
-) {
-  const response = await fetch(`${backendUrl}/api/vault/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      public_key: publicKey,
-      name: name,
-      os: os,
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Registration failed: ${error}`);
+    const err = await response.text();
+    throw new Error(err || 'Pairing failed');
   }
 
   return await response.json();
@@ -56,9 +52,10 @@ export async function sendUnlockApproval(
   mobilePK: string,
   nonce: string,
   signature: string,
-  encryptedBlob: string
+  encryptedBlob: string,
+  webauthnResponse?: any
 ) {
-  const response = await fetch(`${backendUrl}/api/vault/push`, {
+  const response = await fetch(`${backendUrl}/api/web/push`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -67,12 +64,12 @@ export async function sendUnlockApproval(
       pairing_nonce: nonce,
       signature: signature,
       encrypted_blob: encryptedBlob,
+      webauthn_response: webauthnResponse // NEW: Full WebAuthn assertion
     }),
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Unlock approval failed: ${error}`);
+    throw new Error('Failed to send unlock approval');
   }
 
   return await response.json();

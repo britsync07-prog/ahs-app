@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -29,7 +30,29 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		// Native desktop clients (tokio-tungstenite) usually do not send Origin.
+		// Allow empty Origin so local desktop-to-backend WS can connect.
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin == "" {
+			return true
+		}
+
+		allowed := strings.Split(os.Getenv("WS_ALLOWED_ORIGINS"), ",")
+		if len(allowed) == 1 && strings.TrimSpace(allowed[0]) == "" {
+			allowed = []string{
+				"http://localhost:1420",
+				"http://127.0.0.1:1420",
+				"tauri://localhost",
+				"http://tauri.localhost",
+				"https://ahs.mayfairmarketing.online",
+			}
+		}
+		for _, a := range allowed {
+			if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(a)), []byte(origin)) == 1 {
+				return true
+			}
+		}
+		return false
 	},
 }
 
@@ -82,18 +105,6 @@ func (h *Handler) GetActivity(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(userLogs)
-}
-
-func (h *Handler) HandleMobileUpdate(w http.ResponseWriter, r *http.Request) {
-	updateResponse := map[string]interface{}{
-		"version":  "1.1", // Current production version
-		"notes":    "Production release with automated update check.",
-		"pub_date": "2026-05-22T10:00:00Z",
-		"url":      "https://github.com/britsync07-prog/ahs-app/releases/latest/download/vault-mobile-auth.apk",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(updateResponse)
 }
 
 func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {

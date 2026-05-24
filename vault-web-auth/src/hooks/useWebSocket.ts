@@ -12,7 +12,7 @@ export function useWebSocket(url: string | null, publicKey: string | null) {
     if (!url || !publicKey || socketRef.current) return;
 
     // Convert http(s) to ws(s) if necessary
-    const wsUrl = url.replace(/^http/, 'ws') + '/api/ws/connect';
+    const wsUrl = url.replace(/^http/, 'ws') + '/api/web/ws/connect';
     const socket = new WebSocket(`${wsUrl}?public_key=${encodeURIComponent(publicKey)}`);
 
     socket.onopen = () => {

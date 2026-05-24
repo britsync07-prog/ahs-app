@@ -95,21 +95,30 @@ function App() {
     init();
   }, []);
 
-  const finishUnlockApproval = useCallback(async (nonce: string, desktopPK: string) => {
+  const finishUnlockApproval = useCallback(async (nonce: string, desktopPK: string, webauthnResponse?: any) => {
     const masterKey = await db.getMasterKey();
     const identityPriv = await db.getIdentityPrivateKey();
     if (!masterKey || !identityPriv || !pairingData) throw new Error('Missing keys');
 
     const encryptedBlob = await crypto.encryptForDesktop(masterKey, pairingData.desktop_x_public_key);
-    const signature = await crypto.signData(identityPriv, nonce);
+    
+    // If WebAuthn was used, we use the WebAuthn PK as the identity for this request
+    const biometricPK = await db.getBiometricPublicKey();
+    const mobilePK = (webauthnResponse && biometricPK) ? biometricPK : identityPK!;
+
+    let signature = '';
+    if (!webauthnResponse) {
+      signature = await crypto.signData(identityPriv, nonce);
+    }
 
     await sendUnlockApproval(
       pairingData.backend_url,
       desktopPK,
-      identityPK!,
+      mobilePK,
       nonce,
       signature,
-      encryptedBlob
+      encryptedBlob,
+      webauthnResponse
     );
 
     setBiometricPending(false);
@@ -193,16 +202,31 @@ function App() {
       
       // Mandatory Enrollment
       console.log('[DEBUG] Starting mandatory biometric enrollment...');
-      const credentialId = await registerBiometric('User');
+      const biometricData = await registerBiometric('User');
       
-      if (!credentialId) {
+      if (!biometricData) {
         throw new Error('Biometric registration failed to return a credential.');
       }
 
       console.log('[DEBUG] Saving biometric settings...');
-      await db.setBiometricCredentialId(credentialId);
+      await db.setBiometricCredentialId(biometricData.id);
+      await db.setBiometricPublicKey(biometricData.publicKey);
       await db.setBiometricsEnabled(true);
-      console.log('[DEBUG] Biometric settings saved with ID:', credentialId);
+      console.log('[DEBUG] Biometric settings saved with ID:', biometricData.id);
+
+      // Notify backend of the new hardware key link (Mirrors native binding)
+      const pairingData = await db.getPairingData();
+      if (identityPK && pairingData) {
+        await fetch(`${pairingData.backend_url}/api/web/register-webauthn`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mobile_public_key: identityPK,
+            webauthn_id: biometricData.id,
+            webauthn_pubkey: biometricData.publicKey,
+          }),
+        });
+      }
 
       // Save PIN Hash using Salt + SHA-256 (Native Mirror)
       console.log('[DEBUG] Calculating and saving PIN hash...');
@@ -327,7 +351,6 @@ function App() {
         hasStoredHash: !!storedHash,
         storedHashLength: storedHash?.length,
         hasSalt: !!saltB64,
-        saltB64: saltB64 // Explicitly log salt for debugging persistence
       });
 
       if (!storedHash || !saltB64) {
@@ -376,8 +399,8 @@ function App() {
     setIsProcessing(true);
     try {
       console.log('[DEBUG] Triggering biometric for approval...');
-      await authenticateBiometric(credentialId);
-      await finishUnlockApproval(pairingData.pairing_nonce, pairingData.desktop_public_key);
+      const webauthnResp = await authenticateBiometric(credentialId);
+      await finishUnlockApproval(pairingData.pairing_nonce, pairingData.desktop_public_key, webauthnResp);
     } catch (err: any) {
       console.warn('[DEBUG] Biometric auth failed, showing PIN fallback:', err);
       setShowPinFallback(true);
