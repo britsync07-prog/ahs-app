@@ -47,6 +47,7 @@ export function useWebAuthn() {
 
     try {
       // Check if platform authenticator is available (FaceID/TouchID)
+      console.log('Checking biometric availability...');
       const isAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
       if (!isAvailable) {
         throw new Error('Face ID or Touch ID is not available or enabled on this device.');
@@ -61,14 +62,23 @@ export function useWebAuthn() {
         timeout: 60000,
       };
 
+      console.log('Triggering system biometric prompt...');
       const assertion = (await navigator.credentials.get({
         publicKey: requestOptions,
       })) as PublicKeyCredential;
 
+      if (!assertion) {
+        throw new Error('No biometric credential found. Please enroll biometrics in Security Setup first.');
+      }
+
       return assertion;
     } catch (err: any) {
+      console.error('Biometric authentication error:', err);
       if (err.name === 'NotAllowedError') {
         throw new Error('Authentication cancelled or biometric data not recognized.');
+      }
+      if (err.name === 'NotFoundError') {
+        throw new Error('No registered biometrics found on this device. Please use PIN or re-enroll in Settings.');
       }
       throw err;
     }

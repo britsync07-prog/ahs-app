@@ -9,7 +9,7 @@ interface BiometricPromptProps {
 
 export const BiometricPrompt: React.FC<BiometricPromptProps> = ({ onApprove, onDeny, loading }) => {
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center px-6">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center px-6">
       {/* Cinematic backdrop */}
       <div 
         className="absolute inset-0 bg-black/40 backdrop-blur-md animate-in fade-in duration-500" 

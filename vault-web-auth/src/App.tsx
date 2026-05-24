@@ -67,6 +67,19 @@ function App() {
 
       if (!pk) {
         setState('onboarding');
+        // NATIVE MIRROR: Generate identity key pair immediately on launch/onboarding start
+        try {
+          const { publicKey, privateKey } = await crypto.generateIdentity();
+          const { privateKey: xPriv } = crypto.generateX25519KeyPair();
+          const pkB64 = await crypto.exportPublicKey(publicKey);
+          const xPrivB64 = crypto.uint8ArrayToBase64(xPriv);
+          await db.saveIdentity(pkB64, privateKey);
+          await db.saveXPrivateKey(xPrivB64);
+          setIdentityPK(pkB64);
+          console.log('Hardware identity generated on launch.');
+        } catch (e) {
+          console.error('Initial identity generation failed', e);
+        }
       } else if (!pin) {
         setState('security-setup');
       } else {
@@ -144,28 +157,10 @@ function App() {
     if (onboardingStep < 2) {
       setOnboardingStep(onboardingStep + 1);
     } else {
-      setIsProcessing(true);
-      try {
-        const { publicKey, privateKey } = await crypto.generateIdentity();
-        const { privateKey: xPriv } = crypto.generateX25519KeyPair();
-        
-        const pkB64 = await crypto.exportPublicKey(publicKey);
-        const xPrivB64 = crypto.uint8ArrayToBase64(xPriv);
-
-        await db.saveIdentity(pkB64, privateKey);
-        await db.saveXPrivateKey(xPrivB64);
-        
-        setIdentityPK(pkB64);
-        // Wait for pairing or manual identity gen. 
-        // In web, we move to main and wait for pairing to trigger setup.
-        setState('main');
-        setVaultStatus('Unpaired');
-      } catch (err) {
-        console.error('Identity generation failed', err);
-        alert('Failed to generate secure identity.');
-      } finally {
-        setIsProcessing(false);
-      }
+      // Identity is already generated in init() or onboarding start.
+      // Move to main and wait for pairing to trigger security setup.
+      setState('main');
+      setVaultStatus('Unpaired');
     }
   };
 
@@ -189,10 +184,16 @@ function App() {
       if (!tempPin) return;
       
       // Mandatory Enrollment
+      let enrolled = false;
       try {
+        console.log('Starting biometric enrollment...');
         await registerBiometric('User');
+        enrolled = true;
+        await db.setBiometricsEnabled(true);
       } catch (e) {
-        console.warn('Biometric registration skipped or failed', e);
+        console.warn('Biometric registration failed/skipped', e);
+        // We continue even if biometric registration fails, as PIN is the mandatory fallback
+        await db.setBiometricsEnabled(false);
       }
 
       // Save PIN Hash using Salt + SHA-256 (Native Mirror)
@@ -208,6 +209,12 @@ function App() {
 
       setState('main');
       setIsAppLocked(false);
+      
+      if (enrolled) {
+        alert('Security Setup Complete! Biometrics and PIN are now active.');
+      } else {
+        alert('Setup Complete with PIN only. Biometrics were not enabled.');
+      }
     } catch (err) {
       console.error('Security setup failed', err);
       alert('Security setup failed. Please try again.');
@@ -259,11 +266,18 @@ function App() {
   };
 
   const handleAppLockUnlock = async () => {
+    const biometricsReady = await db.isBiometricsEnabled();
+    if (!biometricsReady) {
+      setShowPinFallback(true);
+      return;
+    }
+
     setIsProcessing(true);
     try {
       await authenticateBiometric();
       setIsAppLocked(false);
     } catch (err) {
+      console.warn('App lock biometric failed, showing PIN fallback');
       setShowPinFallback(true);
     } finally {
       setIsProcessing(false);
@@ -303,6 +317,15 @@ function App() {
 
   const handleApproveUnlock = async () => {
     if (!pairingData || !identityPK) return;
+    
+    // Check if biometrics were ever successfully enrolled
+    const biometricsReady = await db.isBiometricsEnabled();
+    if (!biometricsReady) {
+      console.log('Biometrics not enrolled, jumping directly to PIN fallback.');
+      setShowPinFallback(true);
+      return;
+    }
+
     setIsProcessing(true);
     try {
       // 1. Try Biometric First (Exactly like native 'authenticateForUnlock')
@@ -311,6 +334,7 @@ function App() {
       await finishUnlockApproval(pairingData.pairing_nonce, pairingData.desktop_public_key);
     } catch (err: any) {
       // 3. Failure: Show PIN Fallback (Exactly like native's intended fallback)
+      console.warn('Biometric auth failed or cancelled, showing PIN fallback.');
       setShowPinFallback(true);
       setBiometricPending(false);
     } finally {
@@ -492,14 +516,23 @@ function App() {
             <p className="text-text-secondary text-sm font-bold tracking-[0.2em] uppercase opacity-60">Identity Verification Required</p>
           </div>
 
-          <button 
-            onClick={handleAppLockUnlock}
-            disabled={isProcessing}
-            className="px-12 py-5 bg-neon-cyan text-black rounded-full font-black uppercase tracking-widest shadow-neon-glow active:scale-95 transition-all flex items-center gap-3"
-          >
-            <Shield size={20} />
-            Unlock Vault
-          </button>
+          <div className="flex flex-col w-full gap-3">
+            <button 
+              onClick={handleAppLockUnlock}
+              disabled={isProcessing}
+              className="w-full py-5 bg-neon-cyan text-black rounded-full font-black uppercase tracking-widest shadow-neon-glow active:scale-95 transition-all flex items-center justify-center gap-3"
+            >
+              <Shield size={20} />
+              Unlock Vault
+            </button>
+            
+            <button 
+              onClick={() => setShowPinFallback(true)}
+              className="w-full py-4 text-text-secondary font-bold text-[10px] uppercase tracking-[0.2em] hover:text-text-primary transition-colors"
+            >
+              Or Use Security PIN
+            </button>
+          </div>
         </div>
 
         {showPinFallback && (

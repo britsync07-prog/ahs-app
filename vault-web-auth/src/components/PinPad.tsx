@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Delete, ShieldCheck, X } from 'lucide-react';
+import { Delete, ShieldCheck } from 'lucide-react';
 
 interface PinPadProps {
   title: string;
@@ -48,7 +48,7 @@ export const PinPad: React.FC<PinPadProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[110] bg-background flex flex-col items-center animate-in fade-in duration-500 overflow-hidden">
+    <div className="fixed inset-0 z-[300] bg-background flex flex-col items-center animate-in fade-in duration-500 overflow-hidden">
       {/* Header */}
       <div className="w-full p-8 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -62,9 +62,9 @@ export const PinPad: React.FC<PinPadProps> = ({
         {onCancel && (
           <button 
             onClick={onCancel}
-            className="p-3 glass rounded-full hover:bg-text-secondary/10 transition-colors"
+            className="px-6 py-2 glass rounded-full text-[10px] font-black uppercase tracking-widest text-text-secondary hover:text-text-primary transition-colors"
           >
-            <X size={20} className="text-text-primary" />
+            Skip
           </button>
         )}
       </div>

@@ -1,5 +1,7 @@
-import React from 'react';
-import { Palette, Shield, Key, Bell, Globe, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Palette, Shield, Key, Bell, Globe, ChevronRight, Fingerprint, RefreshCw } from 'lucide-react';
+import { db } from '../lib/db';
+import { useWebAuthn } from '../hooks/useWebAuthn';
 
 interface SettingsProps {
   isDarkTheme: boolean;
@@ -7,6 +9,28 @@ interface SettingsProps {
 }
 
 export const SettingsScreen: React.FC<SettingsProps> = ({ isDarkTheme, onThemeToggle }) => {
+  const [biometricsEnabled, setBiometricsEnabled] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const { registerBiometric } = useWebAuthn();
+
+  useEffect(() => {
+    db.isBiometricsEnabled().then(setBiometricsEnabled);
+  }, []);
+
+  const handleRegisterBiometrics = async () => {
+    setIsRegistering(true);
+    try {
+      await registerBiometric('User');
+      await db.setBiometricsEnabled(true);
+      setBiometricsEnabled(true);
+      alert('Biometrics successfully registered!');
+    } catch (err: any) {
+      console.error(err);
+      alert(`Registration failed: ${err.message}`);
+    } finally {
+      setIsRegistering(false);
+    }
+  };
   const sections = [
     {
       title: 'General',
@@ -21,6 +45,19 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ isDarkTheme, onThemeTo
       items: [
         { label: 'Vault Configuration', icon: Shield, color: 'text-neon-cyan' },
         { label: 'Master Recovery Key', icon: Key, color: 'text-emerald-green' },
+      ]
+    },
+    {
+      title: 'Biometrics',
+      items: [
+        { 
+          label: biometricsEnabled ? 'Identity Enrolled' : 'Not Enrolled', 
+          icon: Fingerprint, 
+          color: 'text-neon-cyan',
+          isButton: true,
+          action: handleRegisterBiometrics,
+          buttonText: biometricsEnabled ? 'Update' : 'Enroll'
+        },
       ]
     }
   ];
@@ -39,10 +76,10 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ isDarkTheme, onThemeTo
               {section.title}
             </h3>
             <div className="card-base overflow-hidden">
-              {section.items.map((item, index) => (
+              {section.items.map((item: any, index: number) => (
                 <div 
                   key={item.label}
-                  onClick={item.isToggle ? onThemeToggle : undefined}
+                  onClick={item.isToggle ? onThemeToggle : (item.isButton ? item.action : undefined)}
                   className={`w-full flex items-center justify-between p-5 hover:bg-text-secondary/5 active:bg-text-secondary/10 transition-colors cursor-pointer ${
                     index !== section.items.length - 1 ? 'border-b border-border-subtle' : ''
                   }`}
@@ -63,6 +100,10 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ isDarkTheme, onThemeTo
                   {item.isToggle ? (
                     <div className={`w-12 h-6 rounded-full transition-colors relative ${isDarkTheme ? 'bg-neon-cyan' : 'bg-text-secondary/30'}`}>
                       <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${isDarkTheme ? 'left-7' : 'left-1'}`} />
+                    </div>
+                  ) : item.isButton ? (
+                    <div className="px-4 py-1.5 bg-neon-cyan/10 text-neon-cyan rounded-lg text-[10px] font-black uppercase tracking-widest">
+                      {isRegistering ? <RefreshCw size={12} className="animate-spin" /> : item.buttonText}
                     </div>
                   ) : (
                     <ChevronRight size={18} className="text-text-secondary opacity-30" />

@@ -120,6 +120,14 @@ class VaultDB {
     await this.set('decoy_pin_hash', hash);
   }
 
+  async setBiometricsEnabled(enabled: boolean): Promise<void> {
+    await this.set('biometrics_enabled', enabled);
+  }
+
+  async isBiometricsEnabled(): Promise<boolean> {
+    return (await this.get<boolean>('biometrics_enabled')) || false;
+  }
+
   async saveXPrivateKey(privateKey: string): Promise<void> {
     await this.set('x_private_key', privateKey);
   }
