@@ -120,8 +120,9 @@ function App() {
       // 1. WAKE_UP_BIOMETRIC: Remote trigger for biometric approval (Magic Unlock)
       if (lastMessage === 'WAKE_UP_BIOMETRIC' && pairingData) {
         setBiometricPending(true);
-        // Native flow triggers biometric immediately
-        handleApproveUnlock(); 
+        // NATIVE MIRROR: On web, we CANNOT trigger biometric immediately from a socket message 
+        // as it requires a direct user gesture. We show the prompt and wait for user click.
+        console.log('Magic Unlock requested. Waiting for user gesture...');
         return;
       }
 
@@ -278,15 +279,13 @@ function App() {
       return;
     }
 
-    setIsProcessing(true);
+    // Trigger biometric as directly as possible from the user gesture
     try {
       await authenticateBiometric(credentialId);
       setIsAppLocked(false);
     } catch (err) {
       console.warn('App lock biometric failed, showing PIN fallback');
       setShowPinFallback(true);
-    } finally {
-      setIsProcessing(false);
     }
   };
 
