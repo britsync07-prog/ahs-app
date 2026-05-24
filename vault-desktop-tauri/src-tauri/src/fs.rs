@@ -1404,55 +1404,7 @@ impl Filesystem for VaultFS {
 }
 
 pub fn internal_purge_blobs(config_path: &PathBuf, blob_ids: Vec<String>) -> Result<(), String> {
-    if blob_ids.is_empty() { return Ok(()); }
-    
-    use ed25519_dalek::Signer;
-    use base64::Engine;
-    
-    let payload = serde_json::json!({ "blob_ids": blob_ids });
-    let payload_bytes = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
-    
-    let (sk, pk) = crate::get_or_create_signing_key_at(config_path.clone());
-    let signature = sk.sign(&payload_bytes);
-    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
-    
-    // Read google token from config
-    let google_token = if let Ok(content) = std_fs::read_to_string(config_path) {
-        if let Ok(config) = serde_json::from_str::<crate::OnboardingConfig>(&content) {
-            config.google_access_token
-        } else { None }
-    } else { None };
-
-    let client = reqwest::blocking::Client::new();
-    let mut rb = client.post(format!("{}/api/vault/delete", crate::config::get_backend_url()))
-        .header("X-Desktop-PK", pk.clone())
-        .header("X-Signature", sig_b64.clone())
-        .json(&payload);
-    
-    if let Some(token) = google_token {
-        rb = rb.header("X-Google-Token", token);
-    }
-
-    let mut res = rb.send()
-        .map_err(|e| e.to_string())?;
-        
-    if res.status() == reqwest::StatusCode::UNAUTHORIZED {
-        // Try to refresh token and retry ONCE
-        if let Ok(new_token) = crate::oauth::refresh_google_token_blocking(config_path) {
-            let client = reqwest::blocking::Client::new();
-            res = client.post(format!("{}/api/vault/delete", crate::config::get_backend_url()))
-                .header("X-Desktop-PK", pk)
-                .header("X-Signature", sig_b64)
-                .header("X-Google-Token", new_token)
-                .json(&payload)
-                .send()
-                .map_err(|e| e.to_string())?;
-        }
-    }
-
-    if res.status().is_success() {
-        Ok(())
-    } else {
-        Err(format!("Server returned error: {}", res.status()))
-    }
+    // Pass off to the new direct-to-Google-Drive engine.
+    // This entirely bypasses the backend as requested by the user.
+    crate::drive_client::delete_blobs_direct(config_path, blob_ids)
 }
