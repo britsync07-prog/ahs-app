@@ -1,0 +1,1 @@
+2026/05/25 02:21:53 Failed to initialize database schema: failed to execute schema query: failed to connect to `user=vault_admin database=vault_metadata`: 127.0.0.1:5439 (localhost): dial error: dial tcp 127.0.0.1:5439: connect: connection refused
