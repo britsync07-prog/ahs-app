@@ -34,15 +34,21 @@ export function useWebAuthn() {
       timeout: 60000,
     };
 
-    console.log('Requesting WebAuthn Registration...');
-    const credential = (await navigator.credentials.create({
-      publicKey: creationOptions,
-    })) as any;
+    console.log('[DEBUG] WebAuthn Creation Options:', JSON.stringify(creationOptions, null, 2));
+    try {
+      const credential = (await navigator.credentials.create({
+        publicKey: creationOptions,
+      })) as any;
 
-    if (!credential) throw new Error('Registration failed');
+      if (!credential) throw new Error('Registration failed: No credential returned');
 
-    // Return the credential ID as Base64 so we can use it for authentication
-    return crypto.uint8ArrayToBase64(new Uint8Array(credential.rawId));
+      console.log('[DEBUG] WebAuthn Registration Successful:', credential.id);
+      // Return the credential ID as Base64 so we can use it for authentication
+      return crypto.uint8ArrayToBase64(new Uint8Array(credential.rawId));
+    } catch (err: any) {
+      console.error('[DEBUG] WebAuthn Registration Error:', err);
+      throw err;
+    }
   }, []);
 
   const authenticateBiometric = useCallback(async (credentialIdB64: string) => {
@@ -63,20 +69,29 @@ export function useWebAuthn() {
         allowCredentials: [{
           id: credentialId.buffer as ArrayBuffer,
           type: 'public-key',
-          transports: ['internal'], // Force internal platform authenticator
+          // NATIVE MIRROR: On Android, forcing 'internal' transport can sometimes block 
+          // the prompt if the authenticator doesn't explicitly report as internal.
+          // We omit it for maximum compatibility across Android Chrome versions.
         }],
         timeout: 60000,
       };
 
-      console.log('Triggering Targeted Biometric Prompt for ID:', credentialIdB64);
+      console.log('[DEBUG] WebAuthn Request Options:', JSON.stringify({
+        ...requestOptions,
+        challenge: '...',
+        allowCredentials: requestOptions.allowCredentials?.map(c => ({ ...c, id: '...' }))
+      }, null, 2));
+
+      console.log('[DEBUG] Triggering Targeted Biometric Prompt for ID:', credentialIdB64);
       const assertion = (await navigator.credentials.get({
         publicKey: requestOptions,
       })) as PublicKeyCredential;
 
-      if (!assertion) throw new Error('Authentication failed');
+      if (!assertion) throw new Error('Authentication failed: No assertion returned');
+      console.log('[DEBUG] WebAuthn Authentication Successful');
       return assertion;
     } catch (err: any) {
-      console.error('Biometric Auth Error:', err);
+      console.error('[DEBUG] Biometric Auth Error:', err);
       if (err.name === 'NotAllowedError') {
         throw new Error('Authentication cancelled or timeout.');
       }

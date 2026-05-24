@@ -11,11 +11,13 @@ export interface PairingData {
 
 class VaultDB {
   private db: IDBDatabase | null = null;
+  private initPromise: Promise<void> | null = null;
 
   async init(): Promise<void> {
     if (this.db) return;
+    if (this.initPromise) return this.initPromise;
 
-    return new Promise((resolve, reject) => {
+    this.initPromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
       request.onupgradeneeded = (event) => {
@@ -31,9 +33,12 @@ class VaultDB {
       };
 
       request.onerror = (event) => {
+        this.initPromise = null;
         reject((event.target as IDBOpenDBRequest).error);
       };
     });
+
+    return this.initPromise;
   }
 
   async get<T>(key: string): Promise<T | null> {

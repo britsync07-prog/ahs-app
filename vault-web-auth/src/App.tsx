@@ -184,38 +184,56 @@ function App() {
 
   const handleSecuritySetupBiometric = async () => {
     setIsProcessing(true);
+    console.log('[DEBUG] Starting handleSecuritySetupBiometric');
     try {
-      if (!tempPin) return;
+      if (!tempPin) {
+        console.error('[DEBUG] tempPin is missing during biometric enrollment');
+        throw new Error('PIN setup missing. Please restart setup.');
+      }
       
       // Mandatory Enrollment
-      console.log('Starting mandatory biometric enrollment...');
+      console.log('[DEBUG] Starting mandatory biometric enrollment...');
       const credentialId = await registerBiometric('User');
       
       if (!credentialId) {
         throw new Error('Biometric registration failed to return a credential.');
       }
 
+      console.log('[DEBUG] Saving biometric settings...');
       await db.setBiometricCredentialId(credentialId);
       await db.setBiometricsEnabled(true);
-      console.log('Biometric registration successful with ID:', credentialId);
+      console.log('[DEBUG] Biometric settings saved with ID:', credentialId);
 
       // Save PIN Hash using Salt + SHA-256 (Native Mirror)
+      console.log('[DEBUG] Calculating and saving PIN hash...');
       const salt = crypto.generateRandomSalt();
       const saltB64 = crypto.uint8ArrayToBase64(salt);
       const pinHash = await crypto.hashPin(tempPin, salt);
+      
       await db.savePinHash(pinHash, saltB64);
+      console.log('[DEBUG] PIN hash and salt saved successfully');
 
       if (tempDecoyPin) {
+        console.log('[DEBUG] Saving decoy PIN hash...');
         const decoyHash = await crypto.hashPin(tempDecoyPin, salt);
         await db.saveDecoyPinHash(decoyHash);
+        console.log('[DEBUG] Decoy PIN saved');
       }
 
+      // FINAL VERIFICATION before moving to main
+      const verifyHash = await db.getPinHash();
+      const verifySalt = await db.getPinSalt();
+      if (!verifyHash || !verifySalt) {
+        throw new Error('Persistence check failed: PIN hash/salt missing after save');
+      }
+
+      console.log('[DEBUG] Security setup verified in DB. Finishing...');
       setState('main');
       setIsAppLocked(false);
       
       alert('Security Setup Complete! Biometrics and PIN are now active.');
     } catch (err: any) {
-      console.error('Security setup failed', err);
+      console.error('[DEBUG] Security setup failed', err);
       alert(`Security setup failed: ${err.message || 'Unknown error'}. Biometrics are required.`);
     } finally {
       setIsProcessing(false);
@@ -268,12 +286,12 @@ function App() {
     const biometricsReady = await db.isBiometricsEnabled();
     const credentialId = await db.getBiometricCredentialId();
     
-    console.log('Unlock check:', { biometricsReady, hasCredential: !!credentialId });
+    console.log('[DEBUG] Unlock check:', { biometricsReady, hasCredential: !!credentialId });
 
     // NATIVE MIRROR: If biometrics aren't ready, we don't even try - go straight to PIN.
     if (!biometricsReady || !credentialId) {
       const reason = !biometricsReady ? 'Biometrics disabled in DB' : 'Credential ID missing';
-      console.log(`Biometrics not enrolled (${reason}). Switching to PIN pad.`);
+      console.log(`[DEBUG] Biometrics not enrolled (${reason}). Switching to PIN pad.`);
       setBiometricStatus(`Biometrics Unavailable: ${reason}`);
       setShowPinFallback(true);
       return;
@@ -283,12 +301,13 @@ function App() {
     setIsProcessing(true);
     try {
       // Direct, targeted call using the saved credentialId
+      console.log('[DEBUG] Triggering authenticateBiometric with ID:', credentialId);
       await authenticateBiometric(credentialId);
       setIsAppLocked(false);
       setShowPinFallback(false);
       setBiometricStatus('');
     } catch (err: any) {
-      console.error('App lock biometric failed:', err);
+      console.error('[DEBUG] App lock biometric failed:', err);
       setBiometricStatus(`Biometric Failed: ${err.message || 'Unknown'}`);
       // Fallback instantly if cancelled or errored
       setShowPinFallback(true);
@@ -299,11 +318,21 @@ function App() {
 
   const handleAppLockPin = async (pin: string) => {
     setIsProcessing(true);
+    console.log('[DEBUG] handleAppLockPin triggered');
     try {
       const storedHash = await db.getPinHash();
       const saltB64 = await db.getPinSalt();
+      
+      console.log('[DEBUG] PIN Verification State:', {
+        hasStoredHash: !!storedHash,
+        storedHashLength: storedHash?.length,
+        hasSalt: !!saltB64,
+        saltB64: saltB64 // Explicitly log salt for debugging persistence
+      });
+
       if (!storedHash || !saltB64) {
-        alert('Security state invalid. Please Reset All Data.');
+        console.error('[DEBUG] Security state invalid - missing hash or salt');
+        alert('security state invalid. please reset all data');
         return;
       }
       
@@ -311,12 +340,14 @@ function App() {
       const pinHash = await crypto.hashPin(pin, salt);
       
       if (pinHash === storedHash) {
+        console.log('[DEBUG] PIN matches stored hash');
         setIsAppLocked(false);
         setShowPinFallback(false);
       } else {
         const decoyHash = await db.getDecoyPinHash();
+        console.log('[DEBUG] PIN mismatch, checking decoy');
         if (decoyHash && pinHash === decoyHash) {
-          console.warn('DECOY PIN ENTERED');
+          console.warn('[DEBUG] DECOY PIN ENTERED');
           setIsAppLocked(false);
           setShowPinFallback(false);
         } else {
@@ -334,26 +365,35 @@ function App() {
     const biometricsReady = await db.isBiometricsEnabled();
     const credentialId = await db.getBiometricCredentialId();
 
-    console.log('Approve Unlock check:', { biometricsReady, hasCredential: !!credentialId });
+    console.log('[DEBUG] Approve Unlock check:', { biometricsReady, hasCredential: !!credentialId });
 
     if (!biometricsReady || !credentialId) {
-      console.log('Biometrics not enrolled, jumping directly to PIN fallback.');
+      console.log('[DEBUG] Biometrics not enrolled, jumping directly to PIN fallback.');
       setShowPinFallback(true);
       return;
     }
 
     setIsProcessing(true);
     try {
-      console.log('Triggering biometric for approval...');
+      console.log('[DEBUG] Triggering biometric for approval...');
       await authenticateBiometric(credentialId);
       await finishUnlockApproval(pairingData.pairing_nonce, pairingData.desktop_public_key);
     } catch (err: any) {
-      console.warn('Biometric auth failed, showing PIN fallback:', err);
+      console.warn('[DEBUG] Biometric auth failed, showing PIN fallback:', err);
       setShowPinFallback(true);
       setBiometricPending(false);
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const showBiometricDebug = async () => {
+    const enabled = await db.isBiometricsEnabled();
+    const credId = await db.getBiometricCredentialId();
+    const hasPin = !!(await db.getPinHash());
+    const hasSalt = !!(await db.getPinSalt());
+    
+    alert(`BIOMETRIC DEBUG:\nEnabled: ${enabled}\nCredID: ${credId ? (credId.substring(0, 10) + '...') : 'NULL'}\nHas PIN: ${hasPin}\nHas Salt: ${hasSalt}`);
   };
 
   const handlePinUnlockHandshake = async (pin: string) => {
@@ -550,6 +590,13 @@ function App() {
               className="w-full py-4 text-text-secondary font-bold text-[10px] uppercase tracking-[0.2em] hover:text-text-primary transition-colors"
             >
               Or Use Security PIN
+            </button>
+
+            <button 
+              onClick={showBiometricDebug}
+              className="mt-4 px-4 py-2 border border-neon-cyan/20 rounded-full text-[8px] font-bold text-neon-cyan/40 uppercase tracking-widest hover:bg-neon-cyan/5 transition-all"
+            >
+              Biometric Debug
             </button>
           </div>
         </div>
