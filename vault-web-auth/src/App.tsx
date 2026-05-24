@@ -115,33 +115,44 @@ function App() {
   }, []);
 
   const finishUnlockApproval = useCallback(async (nonce: string, desktopPK: string, webauthnResponse?: any) => {
-    const masterKey = await db.getMasterKey();
-    const identityPriv = await db.getIdentityPrivateKey();
-    if (!masterKey || !identityPriv || !pairingData) throw new Error('Missing keys');
+    setIsProcessing(true);
+    try {
+      const masterKey = await db.getMasterKey();
+      const identityPriv = await db.getIdentityPrivateKey();
+      if (!masterKey || !identityPriv || !pairingData) throw new Error('Security keys or pairing data missing');
 
-    const encryptedBlob = await crypto.encryptForDesktop(masterKey, pairingData.desktop_x_public_key);
-    
-    // If WebAuthn was used, we use the WebAuthn PK as the identity for this request
-    const biometricPK = await db.getBiometricPublicKey();
-    const mobilePK = (webauthnResponse && biometricPK) ? biometricPK : identityPK!;
+      console.log('[DEBUG] Preparing unlock approval...');
+      const encryptedBlob = await crypto.encryptForDesktop(masterKey, pairingData.desktop_x_public_key);
+      
+      const biometricPK = await db.getBiometricPublicKey();
+      const mobilePK = (webauthnResponse && biometricPK) ? biometricPK : identityPK!;
 
-    let signature = '';
-    if (!webauthnResponse) {
-      signature = await crypto.signData(identityPriv, nonce);
+      let signature = '';
+      if (!webauthnResponse) {
+        console.log('[DEBUG] No WebAuthn response, generating identity signature...');
+        signature = await crypto.signData(identityPriv, nonce);
+      }
+
+      console.log('[DEBUG] Sending push relay to backend:', pairingData.backend_url);
+      await sendUnlockApproval(
+        pairingData.backend_url,
+        desktopPK,
+        mobilePK,
+        nonce,
+        signature,
+        encryptedBlob,
+        webauthnResponse
+      );
+
+      console.log('[DEBUG] Unlock approval sent successfully.');
+      setBiometricPending(false);
+      setVaultStatus('Unlocked');
+    } catch (err: any) {
+      console.error('[DEBUG] finishUnlockApproval FAILED:', err);
+      alert(`Unlock failed: ${err.message || 'Failed to send approval'}`);
+    } finally {
+      setIsProcessing(false);
     }
-
-    await sendUnlockApproval(
-      pairingData.backend_url,
-      desktopPK,
-      mobilePK,
-      nonce,
-      signature,
-      encryptedBlob,
-      webauthnResponse
-    );
-
-    setBiometricPending(false);
-    setVaultStatus('Unlocked');
   }, [pairingData, identityPK]);
 
   useEffect(() => {
@@ -460,11 +471,23 @@ function App() {
     try {
       console.log('[DEBUG] Triggering biometric for approval...');
       const webauthnResp = await authenticateBiometric(credentialId);
+      
+      // SUCCESS: Call finishUnlockApproval and EXIT.
+      // We do NOT want to catch its errors here and show the PIN pad, 
+      // because biometrics already succeeded.
       await finishUnlockApproval(pairingData.pairing_nonce, pairingData.desktop_public_key, webauthnResp);
+      console.log('[DEBUG] handleApproveUnlock: Biometric handshake completed.');
     } catch (err: any) {
-      console.warn('[DEBUG] Biometric auth failed, showing PIN fallback:', err);
-      setShowPinFallback(true);
-      setBiometricPending(false);
+      // ONLY show PIN fallback if the BIOMETRIC PROMPT failed or was cancelled.
+      if (err.name === 'NotAllowedError' || err.message?.includes('cancelled')) {
+        console.warn('[DEBUG] Biometric auth cancelled, showing PIN fallback.');
+        setShowPinFallback(true);
+        setBiometricPending(false);
+      } else {
+        console.error('[DEBUG] Biometric error:', err);
+        // If it's a real hardware error, still fallback to PIN.
+        setShowPinFallback(true);
+      }
     } finally {
       setIsProcessing(false);
     }
