@@ -22,8 +22,8 @@ func TestUploadVault(t *testing.T) {
 
 	// We can't easily start a real MinIO, so we might need to mock the storage interface.
 	// But let's see if we can at least test the handler logic.
-
-	s := &storage.GDriveStorage{} // This will fail if it tries to connect to real MinIO
+	
+	s := &storage.Storage{} // This will fail if it tries to connect to real MinIO
 	hub := websocket.NewHub()
 	database := &db.Database{}
 	h := NewHandler(s, hub, database)

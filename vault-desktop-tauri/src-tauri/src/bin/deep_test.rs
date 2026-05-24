@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {
         println!("[TEST] Deep Test is not supported on Windows due to FUSE dependency.");
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(windows))]
