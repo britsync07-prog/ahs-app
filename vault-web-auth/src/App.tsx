@@ -31,6 +31,7 @@ function App() {
   const [isAppLocked, setIsAppLocked] = useState(true);
   const [showPinFallback, setShowPinFallback] = useState(false);
   const [biometricPending, setBiometricPending] = useState(false);
+  const [biometricStatus, setBiometricStatus] = useState<string>('');
   
   const [isProcessing, setIsProcessing] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<'Locked' | 'Unlocked' | 'Unpaired'>('Unpaired');
@@ -187,20 +188,16 @@ function App() {
       if (!tempPin) return;
       
       // Mandatory Enrollment
-      let enrolled = false;
-      try {
-        console.log('Starting biometric enrollment...');
-        const credentialId = await registerBiometric('User');
-        if (credentialId) {
-          enrolled = true;
-          await db.setBiometricCredentialId(credentialId);
-          await db.setBiometricsEnabled(true);
-          console.log('Biometric registration successful with ID:', credentialId);
-        }
-      } catch (e) {
-        console.warn('Biometric registration failed/skipped', e);
-        await db.setBiometricsEnabled(false);
+      console.log('Starting mandatory biometric enrollment...');
+      const credentialId = await registerBiometric('User');
+      
+      if (!credentialId) {
+        throw new Error('Biometric registration failed to return a credential.');
       }
+
+      await db.setBiometricCredentialId(credentialId);
+      await db.setBiometricsEnabled(true);
+      console.log('Biometric registration successful with ID:', credentialId);
 
       // Save PIN Hash using Salt + SHA-256 (Native Mirror)
       const salt = crypto.generateRandomSalt();
@@ -216,14 +213,10 @@ function App() {
       setState('main');
       setIsAppLocked(false);
       
-      if (enrolled) {
-        alert('Security Setup Complete! Biometrics and PIN are now active.');
-      } else {
-        alert('Setup Complete with PIN only. Biometrics were not enabled.');
-      }
-    } catch (err) {
+      alert('Security Setup Complete! Biometrics and PIN are now active.');
+    } catch (err: any) {
       console.error('Security setup failed', err);
-      alert('Security setup failed. Please try again.');
+      alert(`Security setup failed: ${err.message || 'Unknown error'}. Biometrics are required.`);
     } finally {
       setIsProcessing(false);
     }
@@ -275,21 +268,28 @@ function App() {
     const biometricsReady = await db.isBiometricsEnabled();
     const credentialId = await db.getBiometricCredentialId();
     
+    console.log('Unlock check:', { biometricsReady, hasCredential: !!credentialId });
+
     // NATIVE MIRROR: If biometrics aren't ready, we don't even try - go straight to PIN.
     if (!biometricsReady || !credentialId) {
-      console.log('Biometrics not enrolled. Switching to PIN pad.');
+      const reason = !biometricsReady ? 'Biometrics disabled in DB' : 'Credential ID missing';
+      console.log(`Biometrics not enrolled (${reason}). Switching to PIN pad.`);
+      setBiometricStatus(`Biometrics Unavailable: ${reason}`);
       setShowPinFallback(true);
       return;
     }
 
+    setBiometricStatus('Waiting for Biometric Prompt...');
     setIsProcessing(true);
     try {
       // Direct, targeted call using the saved credentialId
       await authenticateBiometric(credentialId);
       setIsAppLocked(false);
       setShowPinFallback(false);
+      setBiometricStatus('');
     } catch (err: any) {
       console.error('App lock biometric failed:', err);
+      setBiometricStatus(`Biometric Failed: ${err.message || 'Unknown'}`);
       // Fallback instantly if cancelled or errored
       setShowPinFallback(true);
     } finally {
@@ -334,6 +334,8 @@ function App() {
     const biometricsReady = await db.isBiometricsEnabled();
     const credentialId = await db.getBiometricCredentialId();
 
+    console.log('Approve Unlock check:', { biometricsReady, hasCredential: !!credentialId });
+
     if (!biometricsReady || !credentialId) {
       console.log('Biometrics not enrolled, jumping directly to PIN fallback.');
       setShowPinFallback(true);
@@ -342,10 +344,11 @@ function App() {
 
     setIsProcessing(true);
     try {
+      console.log('Triggering biometric for approval...');
       await authenticateBiometric(credentialId);
       await finishUnlockApproval(pairingData.pairing_nonce, pairingData.desktop_public_key);
     } catch (err: any) {
-      console.warn('Biometric auth failed, showing PIN fallback.');
+      console.warn('Biometric auth failed, showing PIN fallback:', err);
       setShowPinFallback(true);
       setBiometricPending(false);
     } finally {
@@ -525,6 +528,11 @@ function App() {
           <div className="space-y-2">
             <h1 className="text-3xl font-black tracking-tight uppercase">Vault Locked</h1>
             <p className="text-text-secondary text-sm font-bold tracking-[0.2em] uppercase opacity-60">Identity Verification Required</p>
+            {biometricStatus && (
+              <p className="text-neon-cyan text-[10px] font-black uppercase tracking-widest animate-pulse mt-4 bg-neon-cyan/5 py-2 px-4 rounded-full border border-neon-cyan/20">
+                {biometricStatus}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col w-full gap-3">

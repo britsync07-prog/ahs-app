@@ -28,7 +28,7 @@ export function useWebAuthn() {
       authenticatorSelection: {
         authenticatorAttachment: 'platform',
         userVerification: 'required',
-        residentKey: 'preferred', // 'preferred' creates a discoverable credential (Passkey) which is more reliable on iOS
+        residentKey: 'discouraged', // 'discouraged' ensures local hardware binding without iCloud/Passkey sync UI
       },
       attestation: 'none',
       timeout: 60000,

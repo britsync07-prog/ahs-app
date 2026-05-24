@@ -20,10 +20,13 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ isDarkTheme, onThemeTo
   const handleRegisterBiometrics = async () => {
     setIsRegistering(true);
     try {
-      await registerBiometric('User');
-      await db.setBiometricsEnabled(true);
-      setBiometricsEnabled(true);
-      alert('Biometrics successfully registered!');
+      const credentialId = await registerBiometric('User');
+      if (credentialId) {
+        await db.setBiometricCredentialId(credentialId);
+        await db.setBiometricsEnabled(true);
+        setBiometricsEnabled(true);
+        alert('Biometrics successfully registered!');
+      }
     } catch (err: any) {
       console.error(err);
       alert(`Registration failed: ${err.message}`);
@@ -31,6 +34,7 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ isDarkTheme, onThemeTo
       setIsRegistering(false);
     }
   };
+
   const sections = [
     {
       title: 'General',
@@ -115,7 +119,14 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ isDarkTheme, onThemeTo
         ))}
 
         <div className="pt-4 space-y-4">
-          <button className="w-full h-16 rounded-[28px] bg-deep-red/10 border border-deep-red/20 text-deep-red font-bold text-sm uppercase tracking-widest active:scale-[0.98] transition-all">
+          <button 
+            onClick={() => {
+              if (confirm('Permanently wipe all security keys and identity?')) {
+                db.clearAll().then(() => window.location.reload());
+              }
+            }}
+            className="w-full h-16 rounded-[28px] bg-deep-red/10 border border-deep-red/20 text-deep-red font-bold text-sm uppercase tracking-widest active:scale-[0.98] transition-all"
+          >
             Reset All Data
           </button>
           <p className="text-center text-[10px] font-bold text-text-secondary uppercase tracking-[0.2em] opacity-40">
