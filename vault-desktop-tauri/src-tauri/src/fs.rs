@@ -1404,7 +1404,29 @@ impl Filesystem for VaultFS {
 }
 
 pub fn internal_purge_blobs(config_path: &PathBuf, blob_ids: Vec<String>) -> Result<(), String> {
-    // Pass off to the new direct-to-Google-Drive engine.
-    // This entirely bypasses the backend as requested by the user.
-    crate::drive_client::delete_blobs_direct(config_path, blob_ids)
+    if blob_ids.is_empty() { return Ok(()); }
+    
+    use ed25519_dalek::Signer;
+    use base64::Engine;
+    
+    let payload = serde_json::json!({ "blob_ids": blob_ids });
+    let payload_bytes = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
+    
+    let (sk, pk) = crate::get_or_create_signing_key_at(config_path.clone());
+    let signature = sk.sign(&payload_bytes);
+    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+    
+    let client = reqwest::blocking::Client::new();
+    let res = client.post(format!("{}/api/vault/delete", crate::config::get_backend_url()))
+        .header("X-Desktop-PK", pk)
+        .header("X-Signature", sig_b64)
+        .json(&payload)
+        .send()
+        .map_err(|e| e.to_string())?;
+        
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Server returned error: {}", res.status()))
+    }
 }

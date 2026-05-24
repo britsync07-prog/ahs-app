@@ -2,7 +2,6 @@ import React from "react";
 import { Cloud, History, RefreshCcw, HardDrive, Info } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { motion, AnimatePresence } from "framer-motion";
-import { StorageMaintenance } from "./StorageMaintenance";
 
 export const RecoveryCenter: React.FC = () => {
   const [isSyncing, setIsSyncing] = React.useState(false);
@@ -127,26 +126,6 @@ export const RecoveryCenter: React.FC = () => {
                   checked={backupSettings.background} 
                   onToggle={() => toggleBackup('background')}
                 />
-                
-                <div className="pt-4 mt-4 border-t border-white/5">
-                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-text-tertiary mb-3">Storage Maintenance</h4>
-                  <button 
-                    onClick={async () => {
-                      if (confirm("This will scan for and delete old file versions in Google Drive to free up space. Your current files will not be affected. Proceed?")) {
-                        try {
-                          const purged = await invoke<number>("run_vault_cleanup");
-                          alert(`Cleanup complete! Purged ${purged} orphaned files from your cloud storage.`);
-                          fetchStats();
-                        } catch (e) {
-                          alert(`Cleanup failed: ${e}`);
-                        }
-                      }
-                    }}
-                    className="w-full py-2.5 rounded-xl bg-matte border border-red/20 text-red text-[10px] font-bold uppercase tracking-wider hover:bg-red/5 transition-all"
-                  >
-                    Run Storage Cleanup
-                  </button>
-                </div>
              </div>
 
              <div className="p-6 rounded-3xl bg-cyan/5 border border-cyan/10">
@@ -174,8 +153,6 @@ export const RecoveryCenter: React.FC = () => {
                   )}
                   Sync Now
                 </button>
-
-                <StorageMaintenance />
              </div>
            </div>
         </div>

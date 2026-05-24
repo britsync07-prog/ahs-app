@@ -12,7 +12,7 @@ export const SecurityCenter: React.FC = () => {
 
   const fetchStats = async (pk: string | null) => {
     try {
-      const response = await fetch(`${getBackendUrl()}/api/vault/stats-v2${pk ? `?public_key=${encodeURIComponent(pk)}` : ''}`);
+      const response = await fetch(`${getBackendUrl()}/api/vault/stats${pk ? `?public_key=${encodeURIComponent(pk)}` : ''}`);
       if (response.ok) {
         const data = await response.json();
         setStats(data);
