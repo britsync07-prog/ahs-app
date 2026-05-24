@@ -28,7 +28,7 @@ export function useWebAuthn() {
       authenticatorSelection: {
         authenticatorAttachment: 'platform',
         userVerification: 'required',
-        residentKey: 'preferred',
+        residentKey: 'discouraged',
       },
       attestation: 'none',
       timeout: 60000,
@@ -51,11 +51,8 @@ export function useWebAuthn() {
     }
 
     try {
-      const isAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-      if (!isAvailable) {
-        throw new Error('Platform biometrics (Face ID/Fingerprint) not available.');
-      }
-
+      // NATIVE MIRROR: We don't check availability every time as it's an extra async hop 
+      // that can break user gesture on some mobile browsers. We rely on the stored credentialId.
       const challenge = window.crypto.getRandomValues(new Uint8Array(32));
       const credentialId = crypto.base64ToUint8Array(credentialIdB64);
 
