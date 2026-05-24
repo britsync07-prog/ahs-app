@@ -124,6 +124,14 @@ class VaultDB {
     await this.set('biometrics_enabled', enabled);
   }
 
+  async setBiometricCredentialId(id: string): Promise<void> {
+    await this.set('biometric_credential_id', id);
+  }
+
+  async getBiometricCredentialId(): Promise<string | null> {
+    return await this.get<string>('biometric_credential_id');
+  }
+
   async isBiometricsEnabled(): Promise<boolean> {
     return (await this.get<boolean>('biometrics_enabled')) || false;
   }

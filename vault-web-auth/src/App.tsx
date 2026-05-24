@@ -187,12 +187,15 @@ function App() {
       let enrolled = false;
       try {
         console.log('Starting biometric enrollment...');
-        await registerBiometric('User');
-        enrolled = true;
-        await db.setBiometricsEnabled(true);
+        const credentialId = await registerBiometric('User');
+        if (credentialId) {
+          enrolled = true;
+          await db.setBiometricCredentialId(credentialId);
+          await db.setBiometricsEnabled(true);
+          console.log('Biometric registration successful with ID:', credentialId);
+        }
       } catch (e) {
         console.warn('Biometric registration failed/skipped', e);
-        // We continue even if biometric registration fails, as PIN is the mandatory fallback
         await db.setBiometricsEnabled(false);
       }
 
@@ -267,14 +270,17 @@ function App() {
 
   const handleAppLockUnlock = async () => {
     const biometricsReady = await db.isBiometricsEnabled();
-    if (!biometricsReady) {
+    const credentialId = await db.getBiometricCredentialId();
+    
+    if (!biometricsReady || !credentialId) {
+      console.log('Biometrics not ready, showing PIN fallback.');
       setShowPinFallback(true);
       return;
     }
 
     setIsProcessing(true);
     try {
-      await authenticateBiometric();
+      await authenticateBiometric(credentialId);
       setIsAppLocked(false);
     } catch (err) {
       console.warn('App lock biometric failed, showing PIN fallback');
@@ -320,7 +326,9 @@ function App() {
     
     // Check if biometrics were ever successfully enrolled
     const biometricsReady = await db.isBiometricsEnabled();
-    if (!biometricsReady) {
+    const credentialId = await db.getBiometricCredentialId();
+
+    if (!biometricsReady || !credentialId) {
       console.log('Biometrics not enrolled, jumping directly to PIN fallback.');
       setShowPinFallback(true);
       return;
@@ -329,7 +337,7 @@ function App() {
     setIsProcessing(true);
     try {
       // 1. Try Biometric First (Exactly like native 'authenticateForUnlock')
-      await authenticateBiometric();
+      await authenticateBiometric(credentialId);
       // 2. Success: Finish handshake
       await finishUnlockApproval(pairingData.pairing_nonce, pairingData.desktop_public_key);
     } catch (err: any) {

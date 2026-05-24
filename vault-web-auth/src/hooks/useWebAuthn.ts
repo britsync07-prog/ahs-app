@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import * as crypto from '../lib/crypto';
 
 export function useWebAuthn() {
   const registerBiometric = useCallback(async (username: string) => {
@@ -12,7 +13,7 @@ export function useWebAuthn() {
     const creationOptions: PublicKeyCredentialCreationOptions = {
       challenge,
       rp: {
-        name: 'Secure Vault',
+        name: 'Vault Auth',
         id: window.location.hostname,
       },
       user: {
@@ -21,64 +22,66 @@ export function useWebAuthn() {
         displayName: username,
       },
       pubKeyCredParams: [
-        {
-          type: 'public-key',
-          alg: -7, // ES256
-        },
+        { type: 'public-key', alg: -7 },   // ES256 (P-256)
+        { type: 'public-key', alg: -257 }, // RS256
       ],
       authenticatorSelection: {
-        authenticatorAttachment: 'platform', // TouchID, FaceID, Windows Hello
+        authenticatorAttachment: 'platform',
         userVerification: 'required',
+        residentKey: 'preferred',
       },
+      attestation: 'none',
       timeout: 60000,
     };
 
+    console.log('Requesting WebAuthn Registration...');
     const credential = (await navigator.credentials.create({
       publicKey: creationOptions,
-    })) as PublicKeyCredential;
+    })) as any;
 
-    return credential;
+    if (!credential) throw new Error('Registration failed');
+
+    // Return the credential ID as Base64 so we can use it for authentication
+    return crypto.uint8ArrayToBase64(new Uint8Array(credential.rawId));
   }, []);
 
-  const authenticateBiometric = useCallback(async () => {
+  const authenticateBiometric = useCallback(async (credentialIdB64: string) => {
     if (!window.PublicKeyCredential) {
-      throw new Error('Biometric authentication is not supported on this device/browser.');
+      throw new Error('Biometric authentication is not supported.');
     }
 
     try {
-      // Check if platform authenticator is available (FaceID/TouchID)
-      console.log('Checking biometric availability...');
       const isAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
       if (!isAvailable) {
-        throw new Error('Face ID or Touch ID is not available or enabled on this device.');
+        throw new Error('Platform biometrics (Face ID/Fingerprint) not available.');
       }
 
       const challenge = window.crypto.getRandomValues(new Uint8Array(32));
+      const credentialId = crypto.base64ToUint8Array(credentialIdB64);
 
       const requestOptions: PublicKeyCredentialRequestOptions = {
         challenge,
         rpId: window.location.hostname,
         userVerification: 'required',
+        allowCredentials: [{
+          id: credentialId.buffer as ArrayBuffer,
+          type: 'public-key',
+          transports: ['internal'], // Force internal platform authenticator
+        }],
         timeout: 60000,
       };
 
-      console.log('Triggering system biometric prompt...');
+      console.log('Triggering Targeted Biometric Prompt for ID:', credentialIdB64);
       const assertion = (await navigator.credentials.get({
         publicKey: requestOptions,
       })) as PublicKeyCredential;
 
-      if (!assertion) {
-        throw new Error('No biometric credential found. Please enroll biometrics in Security Setup first.');
-      }
-
+      if (!assertion) throw new Error('Authentication failed');
       return assertion;
     } catch (err: any) {
-      console.error('Biometric authentication error:', err);
+      console.error('Biometric Auth Error:', err);
       if (err.name === 'NotAllowedError') {
-        throw new Error('Authentication cancelled or biometric data not recognized.');
-      }
-      if (err.name === 'NotFoundError') {
-        throw new Error('No registered biometrics found on this device. Please use PIN or re-enroll in Settings.');
+        throw new Error('Authentication cancelled or timeout.');
       }
       throw err;
     }
