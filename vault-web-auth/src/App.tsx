@@ -380,12 +380,13 @@ function App() {
   const handleAppLockUnlock = async () => {
     const biometricsReady = await db.isBiometricsEnabled();
     const credentialId = await db.getBiometricCredentialId();
+    const pairingData = await db.getPairingData();
     
     console.log('[DEBUG] Unlock check:', { biometricsReady, hasCredential: !!credentialId });
 
     // NATIVE MIRROR: If biometrics aren't ready, we don't even try - go straight to PIN.
-    if (!biometricsReady || !credentialId) {
-      const reason = !biometricsReady ? 'Biometrics disabled in DB' : 'Credential ID missing';
+    if (!biometricsReady || !credentialId || !pairingData) {
+      const reason = !biometricsReady ? 'Biometrics disabled' : (!pairingData ? 'Not paired' : 'Credential missing');
       console.log(`[DEBUG] Biometrics not enrolled (${reason}). Switching to PIN pad.`);
       setBiometricStatus(`Biometrics Unavailable: ${reason}`);
       setShowPinFallback(true);
@@ -395,9 +396,9 @@ function App() {
     setBiometricStatus('Waiting for Biometric Prompt...');
     setIsProcessing(true);
     try {
-      // Direct, targeted call using the saved credentialId
+      // Direct, targeted call using the saved credentialId and the pairing nonce as challenge
       console.log('[DEBUG] Triggering authenticateBiometric with ID:', credentialId);
-      await authenticateBiometric(credentialId);
+      await authenticateBiometric(credentialId, pairingData.pairing_nonce);
       setIsAppLocked(false);
       setShowPinFallback(false);
       setBiometricStatus('');
@@ -470,7 +471,7 @@ function App() {
     setIsProcessing(true);
     try {
       console.log('[DEBUG] Triggering biometric for approval...');
-      const webauthnResp = await authenticateBiometric(credentialId);
+      const webauthnResp = await authenticateBiometric(credentialId, pairingData.pairing_nonce);
       
       // SUCCESS: Call finishUnlockApproval and EXIT.
       // We do NOT want to catch its errors here and show the PIN pad, 

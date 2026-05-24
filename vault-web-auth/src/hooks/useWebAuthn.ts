@@ -61,23 +61,20 @@ export function useWebAuthn() {
       publicKey: publicKey.replace(/-/g, '+').replace(/_/g, '/'),
     };
   }, []);
+const authenticateBiometric = useCallback(async (credentialId: string, challenge: string) => {
+  const options: PublicKeyCredentialRequestOptionsJSON = {
+    challenge,
+    rpId: window.location.hostname,
+    userVerification: 'required',
+    allowCredentials: [{
+      id: credentialId,
+      type: 'public-key',
+    }],
+    timeout: 60000,
+  };
 
-  const authenticateBiometric = useCallback(async (credentialId: string) => {
-    const challenge = crypto.uint8ArrayToBase64(window.crypto.getRandomValues(new Uint8Array(32)));
-
-    const options: PublicKeyCredentialRequestOptionsJSON = {
-      challenge,
-      rpId: window.location.hostname,
-      userVerification: 'required',
-      allowCredentials: [{
-        id: credentialId,
-        type: 'public-key',
-      }],
-      timeout: 60000,
-    };
-
-    console.log('[SimpleWebAuthn] Starting Authentication for ID:', credentialId);
-    const authenticationResponse = await startAuthentication({ optionsJSON: options });
+  console.log('[SimpleWebAuthn] Starting Authentication for ID:', credentialId, 'with challenge:', challenge);
+  const authenticationResponse = await startAuthentication({ optionsJSON: options });
     
     // This response contains everything needed for backend verification:
     // id, response (authenticatorData, clientDataJSON, signature)

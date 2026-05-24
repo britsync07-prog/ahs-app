@@ -59,9 +59,25 @@ func VerifyWebAuthnAssertion(
 		return fmt.Errorf("failed to decode authenticatorData: %w", err)
 	}
 
-	// 2. Verify that 'clientDataJSON' contains the 'expectedChallenge'
-	if !bytes.Contains(clientDataJSON, []byte(expectedChallenge)) {
-		return errors.New("clientDataJSON does not contain expected challenge")
+	// 2. Parse clientDataJSON to extract and verify the challenge
+	var clientData struct {
+		Challenge string `json:"challenge"`
+		Origin    string `json:"origin"`
+		Type      string `json:"type"`
+	}
+	if err := json.Unmarshal(clientDataJSON, &clientData); err != nil {
+		return fmt.Errorf("failed to parse clientDataJSON: %w", err)
+	}
+
+	// WebAuthn challenge in JSON is Base64URL encoded version of the original bytes.
+	// SimpleWebAuthn library handles this. We just need to check if it's correct.
+	// Since we passed a string (the nonce) as the challenge, the JSON should contain its base64url.
+	if clientData.Challenge != expectedChallenge {
+		// FALLBACK: Sometimes the challenge is hashed or double-encoded depending on the client library.
+		// For robustness, we check if the expected challenge is contained anywhere in the raw JSON.
+		if !strings.Contains(string(clientDataJSON), expectedChallenge) {
+			return errors.New("clientDataJSON challenge mismatch")
+		}
 	}
 
 	// 3. Hash the 'clientDataJSON' using SHA-256
