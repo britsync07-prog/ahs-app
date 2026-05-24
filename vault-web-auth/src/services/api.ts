@@ -71,7 +71,8 @@ export async function sendUnlockApproval(
   });
 
   if (!response.ok) {
-    throw new Error('Failed to send unlock approval');
+    const err = await response.text();
+    throw new Error(err || 'Failed to send unlock approval');
   }
 
   return await response.json();

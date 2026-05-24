@@ -10,8 +10,26 @@ import (
 	"fmt"
 )
 
+// decodeBase64 is a robust decoder that handles standard, URL-safe, and unpadded base64.
+func decodeBase64(s string) ([]byte, error) {
+	s = strings.TrimSpace(s)
+	// Try standard encoding first
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	// Try URL encoding
+	if b, err := base64.URLEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	// Try unpadded standard
+	if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	// Try unpadded URL
+	return base64.RawURLEncoding.DecodeString(s)
+}
+
 // VerifyWebAuthnAssertion verifies a WebAuthn assertion signature (Manual Bridge pattern).
-// Sourced from industry-standard WebAuthn verification logic.
 func VerifyWebAuthnAssertion(
 	pubKeyB64 string,
 	signatureB64 string,
@@ -19,23 +37,23 @@ func VerifyWebAuthnAssertion(
 	authenticatorDataB64 string,
 	expectedChallenge string,
 ) error {
-	// 1. Decode all base64 inputs
-	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKeyB64)
+	// 1. Decode all base64 inputs using robust decoder
+	pubKeyBytes, err := decodeBase64(pubKeyB64)
 	if err != nil {
 		return fmt.Errorf("failed to decode public key: %w", err)
 	}
 
-	signature, err := base64.StdEncoding.DecodeString(signatureB64)
+	signature, err := decodeBase64(signatureB64)
 	if err != nil {
 		return fmt.Errorf("failed to decode signature: %w", err)
 	}
 
-	clientDataJSON, err := base64.StdEncoding.DecodeString(clientDataJSONB64)
+	clientDataJSON, err := decodeBase64(clientDataJSONB64)
 	if err != nil {
 		return fmt.Errorf("failed to decode clientDataJSON: %w", err)
 	}
 
-	authenticatorData, err := base64.StdEncoding.DecodeString(authenticatorDataB64)
+	authenticatorData, err := decodeBase64(authenticatorDataB64)
 	if err != nil {
 		return fmt.Errorf("failed to decode authenticatorData: %w", err)
 	}

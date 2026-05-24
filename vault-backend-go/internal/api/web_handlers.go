@@ -111,8 +111,14 @@ func (h *Handler) WebRelayPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify Identity
+	// 1. Verify Identity
 	if payload.WebAuthnResponse != nil {
+		log.Printf("[DEBUG] WebRelayPush: Verifying WebAuthn. PK_Len=%d, Sig_Len=%d, JSON_Len=%d, AuthData_Len=%d", 
+			len(payload.MobilePublicKey), 
+			len(payload.WebAuthnResponse.Response.Signature),
+			len(payload.WebAuthnResponse.Response.ClientDataJSON),
+			len(payload.WebAuthnResponse.Response.AuthenticatorData))
+
 		err := auth.VerifyWebAuthnAssertion(
 			payload.MobilePublicKey,
 			payload.WebAuthnResponse.Response.Signature,
