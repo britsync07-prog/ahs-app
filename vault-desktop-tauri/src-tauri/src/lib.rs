@@ -4,6 +4,7 @@ pub mod fs;
 mod network;
 mod oauth;
 mod shield;
+mod cleanup;
 
 use base64::{engine::general_purpose, Engine as _};
 use ed25519_dalek::SigningKey;
@@ -1000,6 +1001,7 @@ pub fn run() {
             unlock_offline,
             restore_vault,
             start_restoration_download,
+            cleanup::run_vault_cleanup,
             oauth::login_google,
             is_google_connected,
             save_google_tokens

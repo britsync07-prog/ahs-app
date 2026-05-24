@@ -50,6 +50,7 @@ func NewRouter(h *Handler) *chi.Mux {
 		r.Get("/index", h.GetRootIndex)
 		r.Post("/index", h.SetRootIndex)
 		r.Post("/delete", h.DeleteVault)
+		r.Get("/blobs", h.GetUserBlobs)
 	})
 
 	r.Get("/api/ws/connect", h.WsConnect)

@@ -176,6 +176,25 @@ func (db *Database) GetUserStorageStats(ctx context.Context, pk string) (int, in
 	return count, size, err
 }
 
+func (db *Database) GetAllUserBlobs(ctx context.Context, pk string) ([]string, error) {
+	q := `SELECT blob_id FROM blobs WHERE owner_public_key = $1`
+	rows, err := db.Pool.Query(ctx, q, pk)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var blobIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		blobIDs = append(blobIDs, id)
+	}
+	return blobIDs, nil
+}
+
 func (db *Database) GetBlobOwner(ctx context.Context, blobID string) (string, error) {
 	var owner string
 	err := db.Pool.QueryRow(ctx, "SELECT owner_public_key FROM blobs WHERE blob_id = $1", blobID).Scan(&owner)
