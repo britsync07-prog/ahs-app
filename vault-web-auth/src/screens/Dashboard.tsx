@@ -1,8 +1,10 @@
-import React from 'react';
-import { Wifi, WifiOff, LogOut } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { LogOut, RefreshCw } from 'lucide-react';
 import { SecurityHeroCard } from '../components/dashboard/SecurityHeroCard';
 import { QuickActionButtons } from '../components/dashboard/QuickActionButtons';
 import { LiveStatusGrid } from '../components/dashboard/LiveStatusGrid';
+import { getVaultStats, getActivity } from '../services/api';
+import { db } from '../lib/db';
 
 interface DashboardProps {
   status: 'Locked' | 'Unlocked' | 'Unpaired';
@@ -21,6 +23,48 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onClear,
   loading
 }) => {
+  const [stats, setStats] = useState<any>(null);
+  const [latestEvent, setLatestEvent] = useState<any>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function fetchDashboardData() {
+    try {
+      const pairingData = await db.getPairingData();
+      const identityPK = await db.getIdentityPublicKey();
+      
+      if (pairingData && identityPK) {
+        const [statsData, activityData] = await Promise.all([
+          getVaultStats(pairingData.backend_url, identityPK),
+          getActivity(pairingData.backend_url, identityPK)
+        ]);
+        
+        setStats(statsData);
+        
+        if (activityData && activityData.length > 0) {
+          const latest = activityData.sort((a: any, b: any) => 
+            new Date(b.time).getTime() - new Date(a.time).getTime()
+          )[0];
+          setLatestEvent(latest);
+        }
+      }
+    } catch (err) {
+      console.error('Dashboard data fetch failed:', err);
+    }
+  }
+
+  useEffect(() => {
+    fetchDashboardData();
+    // Poll for stats every 30 seconds
+    const interval = setInterval(fetchDashboardData, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleManualRefresh = async () => {
+    setRefreshing(true);
+    await fetchDashboardData();
+    setTimeout(() => setRefreshing(false), 1000);
+  };
+
   return (
     <div className="flex-1 flex flex-col p-6 space-y-8 animate-in fade-in duration-500">
       {/* Header */}
@@ -36,16 +80,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
         
         <div className="flex items-center gap-4">
-          {isConnected ? (
-            <Wifi size={18} className="text-emerald-green" />
-          ) : (
-            <WifiOff size={18} className="text-deep-red" />
-          )}
+          <button 
+            onClick={handleManualRefresh}
+            className={`p-2 rounded-xl text-text-secondary hover:text-text-primary transition-all bg-text-secondary/5 border border-border-subtle ${refreshing ? 'rotate-180' : ''}`}
+          >
+            <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+          </button>
           <button 
             onClick={onClear}
             className="p-2 rounded-xl text-text-secondary hover:text-text-primary transition-colors bg-text-secondary/5 border border-border-subtle"
           >
-            <LogOut size={18} />
+            <LogOut size={16} />
           </button>
         </div>
       </header>
@@ -61,7 +106,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <QuickActionButtons 
             status={status} 
             onUnlock={onUnlock} 
-            onLockAll={() => alert('All devices locked')} 
+            onLockAll={() => alert('Remote Lock All Delivered')} 
             onPair={onPair}
             loading={loading}
           />
@@ -71,7 +116,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <h3 className="text-[10px] font-black text-text-secondary uppercase tracking-[0.3em] px-2 opacity-50">
             Live Monitoring
           </h3>
-          <LiveStatusGrid />
+          <LiveStatusGrid stats={stats} />
         </div>
 
         <div className="space-y-4">
@@ -79,12 +124,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
             Recent Activity
           </h3>
           <div className="card-base p-6 border-dashed border-border-subtle bg-text-secondary/5">
-            <div className="flex items-center gap-4">
-              <div className="w-1.5 h-1.5 rounded-full bg-neon-cyan animate-pulse" />
-              <p className="text-sm font-medium text-text-primary">
-                MacBook Pro unlocked via Biometrics • 2m ago
+            {latestEvent ? (
+              <div className="flex items-center gap-4 animate-in fade-in duration-700">
+                <div className={`w-1.5 h-1.5 rounded-full ${latestEvent.type === 'threat' ? 'bg-deep-red' : 'bg-neon-cyan'} animate-pulse`} />
+                <p className="text-sm font-medium text-text-primary">
+                  {latestEvent.subject} • {new Date(latestEvent.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-text-secondary italic text-center py-2 opacity-50">
+                No recent activity found.
               </p>
-            </div>
+            )}
           </div>
         </div>
       </div>

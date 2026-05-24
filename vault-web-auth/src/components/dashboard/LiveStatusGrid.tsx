@@ -1,17 +1,46 @@
 import React from 'react';
 import { Activity, Users, ShieldAlert, CloudUpload } from 'lucide-react';
 
-export const LiveStatusGrid: React.FC = () => {
-  const stats = [
-    { label: 'Vault Health', value: '100%', icon: Activity, color: 'text-emerald-green' },
-    { label: 'Sessions', value: '1 Active', icon: Users, color: 'text-neon-cyan' },
-    { label: 'Threats', value: '0 Blocked', icon: ShieldAlert, color: 'text-deep-red' },
-    { label: 'Backup', value: 'Synced', icon: CloudUpload, color: 'text-electric-blue' },
+interface LiveStatusGridProps {
+  stats: {
+    securityScore: number;
+    activeSessions: number;
+    threatsBlocked: number;
+    statusMessage: string;
+  } | null;
+}
+
+export const LiveStatusGrid: React.FC<LiveStatusGridProps> = ({ stats }) => {
+  const displayStats = [
+    { 
+      label: 'Vault Health', 
+      value: stats ? `${stats.securityScore}%` : '---', 
+      icon: Activity, 
+      color: 'text-emerald-green' 
+    },
+    { 
+      label: 'Sessions', 
+      value: stats ? `${stats.activeSessions} Active` : '---', 
+      icon: Users, 
+      color: 'text-neon-cyan' 
+    },
+    { 
+      label: 'Threats', 
+      value: stats ? `${stats.threatsBlocked} Blocked` : '---', 
+      icon: ShieldAlert, 
+      color: 'text-deep-red' 
+    },
+    { 
+      label: 'Status', 
+      value: stats ? stats.statusMessage : '---', 
+      icon: CloudUpload, 
+      color: 'text-electric-blue' 
+    },
   ];
 
   return (
     <div className="grid grid-cols-2 gap-4 w-full">
-      {stats.map((stat) => {
+      {displayStats.map((stat) => {
         const Icon = stat.icon;
         return (
           <div key={stat.label} className="card-base p-5 flex flex-col gap-3">
