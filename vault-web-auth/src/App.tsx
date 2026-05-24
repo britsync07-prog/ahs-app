@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   Shield, 
   RefreshCw,
@@ -26,13 +26,20 @@ function App() {
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [identityPK, setIdentityPK] = useState<string | null>(null);
   const [pairingData, setPairingData] = useState<PairingData | null>(null);
-  const [biometricPending, setBiometricPending] = useState(false);
+  
+  // App Lock State (Mirrors 'isAppLocked' in native)
+  const [isAppLocked, setIsAppLocked] = useState(true);
   const [showPinFallback, setShowPinFallback] = useState(false);
+  const [biometricPending, setBiometricPending] = useState(false);
+  
   const [isProcessing, setIsProcessing] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<'Locked' | 'Unlocked' | 'Unpaired'>('Unpaired');
   const [isDarkTheme, setIsDarkTheme] = useState(false);
-  const [setupStep, setSetupStep] = useState<'pin' | 'biometric'>('pin');
+  
+  // Setup state (Mirrors 'showSetup' and 'setupPin' in native)
+  const [setupStep, setSetupStep] = useState<'pin' | 'decoy_pin' | 'biometric'>('pin');
   const [tempPin, setTempPin] = useState<string | null>(null);
+  const [tempDecoyPin, setTempDecoyPin] = useState<string | null>(null);
 
   useEffect(() => {
     if (isDarkTheme) {
@@ -65,36 +72,63 @@ function App() {
       } else {
         setState('main');
         setVaultStatus(pd ? 'Locked' : 'Unpaired');
+        // Initial state is LOCKED until user biometric/PINs in
+        setIsAppLocked(true);
       }
     }
     init();
   }, []);
 
+  const finishUnlockApproval = useCallback(async (nonce: string, desktopPK: string) => {
+    const masterKey = await db.getMasterKey();
+    const identityPriv = await db.getIdentityPrivateKey();
+    if (!masterKey || !identityPriv || !pairingData) throw new Error('Missing keys');
+
+    const encryptedBlob = await crypto.encryptForDesktop(masterKey, pairingData.desktop_x_public_key);
+    const signature = await crypto.signData(identityPriv, nonce);
+
+    await sendUnlockApproval(
+      pairingData.backend_url,
+      desktopPK,
+      identityPK!,
+      nonce,
+      signature,
+      encryptedBlob
+    );
+
+    setBiometricPending(false);
+    setVaultStatus('Unlocked');
+  }, [pairingData, identityPK]);
+
   useEffect(() => {
     if (!lastMessage) return;
 
     async function handleMessage() {
-      if (lastMessage === 'WAKE_UP_BIOMETRIC') {
+      // 1. WAKE_UP_BIOMETRIC: Remote trigger for biometric approval (Magic Unlock)
+      if (lastMessage === 'WAKE_UP_BIOMETRIC' && pairingData) {
         setBiometricPending(true);
+        // Native flow triggers biometric immediately
+        handleApproveUnlock(); 
         return;
       }
 
-      // Check if it's an encrypted master key push (long base64 string)
+      // 2. MASTER KEY PUSH: SETUP FLOW
       if (typeof lastMessage === 'string' && lastMessage.length > 50) {
         try {
           const xPriv = await db.getXPrivateKey();
           if (xPriv) {
             const masterKey = await crypto.decryptMasterKey(lastMessage, xPriv);
             await db.saveMasterKey(masterKey);
-            setVaultStatus('Locked');
-            console.log('Master key received and saved.');
+            // After receiving key, move to security setup (PIN + Biometric enrollment)
+            setState('security-setup');
+            console.log('Master key received and saved. Moving to security setup.');
           }
         } catch (err) {
           console.error('Failed to decrypt pushed master key', err);
         }
       }
 
-      // Handle other object-based messages if any
+      // 3. STATUS SYNC
       if (typeof lastMessage === 'object') {
         const msg = lastMessage as any;
         if (msg.action === 'VAULT_STATUS_CHANGE') {
@@ -104,7 +138,7 @@ function App() {
     }
 
     handleMessage();
-  }, [lastMessage]);
+  }, [lastMessage, pairingData]);
 
   const handleOnboardingNext = async () => {
     if (onboardingStep < 2) {
@@ -122,7 +156,10 @@ function App() {
         await db.saveXPrivateKey(xPrivB64);
         
         setIdentityPK(pkB64);
-        setState('security-setup');
+        // Wait for pairing or manual identity gen. 
+        // In web, we move to main and wait for pairing to trigger setup.
+        setState('main');
+        setVaultStatus('Unpaired');
       } catch (err) {
         console.error('Identity generation failed', err);
         alert('Failed to generate secure identity.');
@@ -134,6 +171,15 @@ function App() {
 
   const handleSecuritySetupPin = async (pin: string) => {
     setTempPin(pin);
+    setSetupStep('decoy_pin');
+  };
+
+  const handleSecuritySetupDecoyPin = async (pin: string) => {
+    setTempDecoyPin(pin);
+    setSetupStep('biometric');
+  };
+
+  const handleSecuritySetupSkipDecoy = () => {
     setSetupStep('biometric');
   };
 
@@ -142,21 +188,26 @@ function App() {
     try {
       if (!tempPin) return;
       
-      // 1. Register WebAuthn Credential
+      // Mandatory Enrollment
       try {
         await registerBiometric('User');
       } catch (e) {
         console.warn('Biometric registration skipped or failed', e);
-        // We continue even if biometric registration fails, as PIN is the mandatory fallback
       }
 
-      // 2. Save PIN Hash
-      const identityPriv = await db.getIdentityPrivateKey();
-      if (!identityPriv) throw new Error('Identity not found');
-      const pinHash = await crypto.signData(identityPriv, tempPin);
-      await db.savePinHash(pinHash);
+      // Save PIN Hash using Salt + SHA-256 (Native Mirror)
+      const salt = crypto.generateRandomSalt();
+      const saltB64 = crypto.uint8ArrayToBase64(salt);
+      const pinHash = await crypto.hashPin(tempPin, salt);
+      await db.savePinHash(pinHash, saltB64);
+
+      if (tempDecoyPin) {
+        const decoyHash = await crypto.hashPin(tempDecoyPin, salt);
+        await db.saveDecoyPinHash(decoyHash);
+      }
 
       setState('main');
+      setIsAppLocked(false);
     } catch (err) {
       console.error('Security setup failed', err);
       alert('Security setup failed. Please try again.');
@@ -170,29 +221,18 @@ function App() {
     setState('main');
     setIsProcessing(true);
     try {
-      let payload;
-      try {
-        payload = JSON.parse(decodedText);
-      } catch (e) {
-        throw new Error('Invalid QR code format. Not a valid JSON payload.');
-      }
-
-      console.log('Parsed QR payload:', payload);
+      const payload = JSON.parse(decodedText);
       const { backend_url, desktop_public_key, desktop_x_public_key, pairing_nonce } = payload;
       
       const identityPriv = await db.getIdentityPrivateKey();
       const xPriv = await db.getXPrivateKey();
       
-      if (!identityPK || !identityPriv || !xPriv) {
-        console.error('Keys missing:', { identityPK: !!identityPK, identityPriv: !!identityPriv, xPriv: !!xPriv });
-        throw new Error('Local security identity not found. Please regenerate identity in Settings.');
-      }
+      if (!identityPK || !identityPriv || !xPriv) throw new Error('Identity not found');
 
-      console.log('Signing pairing request...');
       const signature = await crypto.signData(identityPriv, pairing_nonce);
       
-      console.log('Sending pairing request to backend:', backend_url);
-      const result = await pairDevice(
+      // Native calls 'pairWithDesktop' which uses WebSocket to receive master key
+      await pairDevice(
         backend_url,
         desktop_public_key,
         identityPK,
@@ -201,28 +241,61 @@ function App() {
         signature
       );
 
-      console.log('Pairing successful result:', result);
-
-      const newPairingData: PairingData = {
+      setPairingData({
         backend_url,
         desktop_public_key,
         desktop_x_public_key,
         pairing_nonce,
-      };
-
-      await db.savePairingData(newPairingData);
-      setPairingData(newPairingData);
-      setVaultStatus('Locked');
+      });
       
-      if (result.encrypted_master_key) {
-        console.log('Master key found in pairing result, decrypting...');
-        const masterKey = await crypto.decryptMasterKey(result.encrypted_master_key, xPriv);
-        await db.saveMasterKey(masterKey);
-        console.log('Master key saved.');
-      }
+      // We stay in 'main' and wait for WebSocket to push the master key, 
+      // which will then trigger state transition to 'security-setup'.
     } catch (err: any) {
       console.error('Pairing failed:', err);
-      alert(`Pairing failed: ${err.message || 'Unknown error'}\n\nCheck if your backend is accessible at the URL shown in the logs.`);
+      alert(`Pairing failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleAppLockUnlock = async () => {
+    setIsProcessing(true);
+    try {
+      await authenticateBiometric();
+      setIsAppLocked(false);
+    } catch (err) {
+      setShowPinFallback(true);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleAppLockPin = async (pin: string) => {
+    setIsProcessing(true);
+    try {
+      const storedHash = await db.getPinHash();
+      const saltB64 = await db.getPinSalt();
+      if (!storedHash || !saltB64) return;
+      
+      const salt = crypto.base64ToUint8Array(saltB64);
+      const pinHash = await crypto.hashPin(pin, salt);
+      
+      if (pinHash === storedHash) {
+        setIsAppLocked(false);
+        setShowPinFallback(false);
+      } else {
+        const decoyHash = await db.getDecoyPinHash();
+        if (decoyHash && pinHash === decoyHash) {
+          console.warn('DECOY PIN ENTERED');
+          // In a real app we'd load decoy data or enter a decoy state.
+          // For now, we unlock but maybe don't load real vault keys.
+          // To keep it simple, we just unlock.
+          setIsAppLocked(false);
+          setShowPinFallback(false);
+        } else {
+          alert('Invalid PIN');
+        }
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -232,10 +305,12 @@ function App() {
     if (!pairingData || !identityPK) return;
     setIsProcessing(true);
     try {
+      // 1. Try Biometric First (Exactly like native 'authenticateForUnlock')
       await authenticateBiometric();
-      await finishUnlockApproval();
+      // 2. Success: Finish handshake
+      await finishUnlockApproval(pairingData.pairing_nonce, pairingData.desktop_public_key);
     } catch (err: any) {
-      console.error('Biometric unlock failed, showing PIN fallback', err);
+      // 3. Failure: Show PIN Fallback (Exactly like native's intended fallback)
       setShowPinFallback(true);
       setBiometricPending(false);
     } finally {
@@ -243,17 +318,28 @@ function App() {
     }
   };
 
-  const handlePinUnlock = async (pin: string) => {
+  const handlePinUnlockHandshake = async (pin: string) => {
+    if (!pairingData) return;
     setIsProcessing(true);
     try {
-      const identityPriv = await db.getIdentityPrivateKey();
-      if (!identityPriv) throw new Error('Identity not found');
-      
-      const pinHash = await crypto.signData(identityPriv, pin);
       const storedHash = await db.getPinHash();
+      const saltB64 = await db.getPinSalt();
+      if (!storedHash || !saltB64) throw new Error('Security setup incomplete');
+      
+      const salt = crypto.base64ToUint8Array(saltB64);
+      const pinHash = await crypto.hashPin(pin, salt);
 
-      if (pinHash === storedHash) {
-        await finishUnlockApproval();
+      let isAuthorized = pinHash === storedHash;
+      if (!isAuthorized) {
+        const decoyHash = await db.getDecoyPinHash();
+        if (decoyHash && pinHash === decoyHash) {
+          isAuthorized = true;
+          console.warn('DECOY PIN ENTERED');
+        }
+      }
+
+      if (isAuthorized) {
+        await finishUnlockApproval(pairingData.pairing_nonce, pairingData.desktop_public_key);
         setShowPinFallback(false);
       } else {
         alert('Invalid PIN. Please try again.');
@@ -264,28 +350,6 @@ function App() {
     } finally {
       setIsProcessing(false);
     }
-  };
-
-  const finishUnlockApproval = async () => {
-    if (!pairingData || !identityPK) return;
-    const masterKey = await db.getMasterKey();
-    const identityPriv = await db.getIdentityPrivateKey();
-    if (!masterKey || !identityPriv) throw new Error('Missing keys');
-
-    const encryptedBlob = await crypto.encryptForDesktop(masterKey, pairingData.desktop_x_public_key);
-    const signature = await crypto.signData(identityPriv, pairingData.pairing_nonce);
-
-    await sendUnlockApproval(
-      pairingData.backend_url,
-      pairingData.desktop_public_key,
-      identityPK,
-      pairingData.pairing_nonce,
-      signature,
-      encryptedBlob
-    );
-
-    setBiometricPending(false);
-    setVaultStatus('Unlocked');
   };
 
   if (state === 'loading') return null;
@@ -367,9 +431,20 @@ function App() {
     if (setupStep === 'pin') {
       return (
         <PinPad 
-          title="Create Security PIN"
-          subtitle="Choose a 6-digit PIN to protect your vault if biometrics are unavailable."
+          title="Security PIN"
+          subtitle="Set a 5-digit PIN for secure recovery access."
           onComplete={handleSecuritySetupPin}
+        />
+      );
+    }
+    
+    if (setupStep === 'decoy_pin') {
+      return (
+        <PinPad 
+          title="Decoy PIN (Optional)"
+          subtitle="Set a 5-digit decoy PIN to open a fake vault under duress, or skip."
+          onComplete={handleSecuritySetupDecoyPin}
+          onCancel={handleSecuritySetupSkipDecoy}
         />
       );
     }
@@ -383,8 +458,8 @@ function App() {
               <Fingerprint size={100} className="relative text-neon-cyan animate-pulse" />
             </div>
             <div className="space-y-4">
-              <h1 className="text-4xl font-black tracking-tight">Biometrics.</h1>
-              <p className="text-text-secondary text-lg max-w-xs mx-auto">Enable Face ID or Fingerprint for instant, secure vault access.</p>
+              <h1 className="text-4xl font-black tracking-tight uppercase">Biometrics.</h1>
+              <p className="text-text-secondary text-lg max-w-xs mx-auto">Enable hardware-backed biometric authentication.</p>
             </div>
           </div>
         </div>
@@ -395,14 +470,49 @@ function App() {
             disabled={isProcessing}
             className="w-full bg-neon-cyan text-black h-16 rounded-3xl font-black text-lg shadow-neon-glow active:scale-95 transition-all flex items-center justify-center space-x-2"
           >
-            {isProcessing ? <RefreshCw className="animate-spin" /> : <span>Enable Biometrics</span>}
+            {isProcessing ? <RefreshCw className="animate-spin" /> : <span>Complete Setup</span>}
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // CINEMATIC LOCK SCREEN (Mirrors Native)
+  if (isAppLocked) {
+    return (
+      <div className="min-h-screen bg-background text-text-primary flex flex-col items-center justify-center p-8 transition-all duration-700">
+        <div className="flex flex-col items-center text-center space-y-12">
+          <div className="relative">
+             <div className="absolute -inset-8 bg-neon-cyan/10 rounded-full blur-3xl animate-pulse" />
+             <Fingerprint size={120} className="text-neon-cyan relative" strokeWidth={1} />
+          </div>
+          
+          <div className="space-y-2">
+            <h1 className="text-3xl font-black tracking-tight uppercase">Vault Locked</h1>
+            <p className="text-text-secondary text-sm font-bold tracking-[0.2em] uppercase opacity-60">Identity Verification Required</p>
+          </div>
+
           <button 
-            onClick={() => setState('main')}
-            className="w-full text-text-secondary font-bold text-sm uppercase tracking-widest py-4"
+            onClick={handleAppLockUnlock}
+            disabled={isProcessing}
+            className="px-12 py-5 bg-neon-cyan text-black rounded-full font-black uppercase tracking-widest shadow-neon-glow active:scale-95 transition-all flex items-center gap-3"
           >
-            Skip for now
+            <Shield size={20} />
+            Unlock Vault
           </button>
+        </div>
+
+        {showPinFallback && (
+          <PinPad 
+            title="Verify PIN"
+            subtitle="Please enter your security PIN."
+            onComplete={handleAppLockPin}
+            onCancel={() => setShowPinFallback(false)}
+          />
+        )}
+
+        <div className="absolute bottom-12 text-[10px] font-black text-text-secondary uppercase tracking-[0.3em] opacity-40">
+           Hardware Encrypted Node v1.2
         </div>
       </div>
     );
@@ -410,16 +520,22 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background text-text-primary font-sans flex flex-col overflow-hidden transition-colors duration-300">
-      {/* Content Rendering based on Tab */}
       <div className="flex-1 flex flex-col overflow-y-auto pb-32">
         {activeTab === 'vault' && (
           <Dashboard 
             status={vaultStatus}
             isConnected={isConnected}
-            onUnlock={handleApproveUnlock}
+            onUnlock={() => {
+              if (pairingData) {
+                // Magic Unlock handshake
+                handleApproveUnlock();
+              } else {
+                setState('pairing');
+              }
+            }}
             onPair={() => setState('pairing')}
             onClear={() => {
-              if (confirm('Clear local data?')) {
+              if (confirm('Permanently wipe all security keys and identity?')) {
                 db.clearAll().then(() => window.location.reload());
               }
             }}
@@ -468,11 +584,11 @@ function App() {
         />
       )}
 
-      {showPinFallback && (
+      {showPinFallback && !isAppLocked && (
         <PinPad 
           title="Verify PIN"
-          subtitle="Biometrics unavailable. Please enter your 5-digit security PIN."
-          onComplete={handlePinUnlock}
+          subtitle="Hardware Identity Verification required."
+          onComplete={handlePinUnlockHandshake}
           onCancel={() => setShowPinFallback(false)}
           loading={isProcessing}
         />

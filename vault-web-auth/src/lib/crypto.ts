@@ -108,6 +108,26 @@ function ieeeToAsn1(ieeeSig: Uint8Array): Uint8Array {
   return der;
 }
 
+/**
+ * Hashes a PIN with a salt using SHA-256 to mirror native Android MessageDigest logic.
+ */
+export async function hashPin(pin: string, salt: Uint8Array): Promise<string> {
+  const encoder = new TextEncoder();
+  const pinBytes = encoder.encode(pin);
+  
+  // Combine salt + pin
+  const combined = new Uint8Array(salt.length + pinBytes.length);
+  combined.set(salt);
+  combined.set(pinBytes, salt.length);
+  
+  const hashBuffer = await window.crypto.subtle.digest('SHA-256', combined);
+  return uint8ArrayToBase64(new Uint8Array(hashBuffer));
+}
+
+export function generateRandomSalt(length: number = 16): Uint8Array {
+  return window.crypto.getRandomValues(new Uint8Array(length));
+}
+
 // --- X25519 & AES-GCM ---
 
 export function generateX25519KeyPair(): { privateKey: Uint8Array; publicKey: Uint8Array } {

@@ -94,6 +94,14 @@ class VaultDB {
     return this.get<string>('pin_hash');
   }
 
+  async getPinSalt(): Promise<string | null> {
+    return this.get<string>('pin_salt');
+  }
+
+  async getDecoyPinHash(): Promise<string | null> {
+    return this.get<string>('decoy_pin_hash');
+  }
+
   async getPairingData(): Promise<PairingData | null> {
     return this.get<PairingData>('pairing_data');
   }
@@ -103,8 +111,13 @@ class VaultDB {
     await this.set('identity_private_key', privateKey);
   }
 
-  async savePinHash(hash: string): Promise<void> {
+  async savePinHash(hash: string, salt: string): Promise<void> {
     await this.set('pin_hash', hash);
+    await this.set('pin_salt', salt);
+  }
+
+  async saveDecoyPinHash(hash: string): Promise<void> {
+    await this.set('decoy_pin_hash', hash);
   }
 
   async saveXPrivateKey(privateKey: string): Promise<void> {
