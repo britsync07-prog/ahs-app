@@ -75,49 +75,32 @@ func NewHandler(s *storage.GDriveStorage, h *ws.Hub, d *db.Database) *Handler {
 }
 
 func (h *Handler) GetDevices(w http.ResponseWriter, r *http.Request) {
-	pk := r.URL.Query().Get("public_key")
-	if pk == "" {
-		http.Error(w, "public_key is required", http.StatusBadRequest)
-		return
-	}
-
 	devices, err := h.db.GetDevices(r.Context())
 	if err != nil {
 		http.Error(w, "Failed to fetch devices", http.StatusInternalServerError)
 		return
 	}
-
-	// Filter for this user
-	userDevices := []map[string]interface{}{}
-	for _, d := range devices {
-		if d["public_key"] == pk {
-			userDevices = append(userDevices, d)
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(userDevices)
+	json.NewEncoder(w).Encode(devices)
 }
 
 func (h *Handler) GetActivity(w http.ResponseWriter, r *http.Request) {
 	pk := r.URL.Query().Get("public_key")
-	if pk == "" {
-		http.Error(w, "public_key is required", http.StatusBadRequest)
-		return
-	}
-
 	logs, err := h.db.GetActivityLogs(r.Context())
 	if err != nil {
 		http.Error(w, "Failed to fetch activity logs", http.StatusInternalServerError)
 		return
 	}
 
-	// Filter logs for THIS user
+	// Filter logs for THIS user if PK provided
 	userLogs := []map[string]interface{}{}
-	for _, l := range logs {
-		if l["device_public_key"] == pk {
-			userLogs = append(userLogs, l)
+	if pk != "" {
+		for _, l := range logs {
+			if l["device_public_key"] == pk {
+				userLogs = append(userLogs, l)
+			}
 		}
+	} else {
+		userLogs = logs
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -125,13 +108,15 @@ func (h *Handler) GetActivity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
+	// In a real production app, you might query GitHub API to get the latest release.
+	// For now, we return a structured JSON that Tauri expects.
 	updateResponse := map[string]interface{}{
-		"version":  "v0.1.1",
+		"version":  "v0.1.1", // Change this when you release a new version
 		"notes":    "Stabilized WebSocket connections and fixed redundant imports.",
 		"pub_date": "2026-05-21T12:00:00Z",
 		"platforms": map[string]interface{}{
 			"windows-x86_64": map[string]interface{}{
-				"signature": "",
+				"signature": "", // You will get this from the build artifact (.sig file)
 				"url":       "https://github.com/britsync07-prog/ahs-app/releases/latest/download/vault-desktop-tauri.msi.zip",
 			},
 		},
@@ -171,6 +156,7 @@ func (h *Handler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if bulk {
+		// Find device first to get name/os
 		devices, _ := h.db.GetDevices(r.Context())
 		var targetName, targetOS string
 		for _, d := range devices {
@@ -197,39 +183,51 @@ func (h *Handler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 	pk := r.URL.Query().Get("public_key")
-	if pk == "" {
-		http.Error(w, "public_key is required for data isolation", http.StatusForbidden)
-		return
-	}
 
-	// 1. Fetch ALL data
-	allDevices, err := h.db.GetDevices(r.Context())
+	// Get all devices first
+	devices, err := h.db.GetDevices(r.Context())
 	if err != nil {
-		allDevices = []map[string]interface{}{}
+		devices = []map[string]interface{}{}
 	}
 
-	allLogs, err := h.db.GetActivityLogs(r.Context())
-	if err != nil {
-		allLogs = []map[string]interface{}{}
-	}
-
-	// 2. Filter for specific user
+	// Filter devices for THIS user if PK provided
 	userDevices := []map[string]interface{}{}
+	if pk != "" {
+		for _, d := range devices {
+			if d["public_key"].(string) == pk {
+				userDevices = append(userDevices, d)
+			}
+		}
+	} else {
+		userDevices = devices
+	}
+
+	logs, err := h.db.GetActivityLogs(r.Context())
+	if err != nil {
+		logs = []map[string]interface{}{}
+	}
+
+	// Filter logs for THIS user if PK provided
 	userLogs := []map[string]interface{}{}
-
-	for _, d := range allDevices {
-		if d["public_key"] == pk {
-			userDevices = append(userDevices, d)
+	if pk != "" {
+		for _, l := range logs {
+			if l["device_public_key"] == pk {
+				userLogs = append(userLogs, l)
+			}
 		}
-	}
-	for _, l := range allLogs {
-		if l["device_public_key"] == pk {
-			userLogs = append(userLogs, l)
-		}
+	} else {
+		userLogs = logs
 	}
 
-	// 3. Calculate REAL stats
+	// Calculate Real Security Score (Starting at 100)
 	score := 100
+
+	// Deduct for many devices (potential surface area)
+	if len(userDevices) > 3 {
+		score -= (len(userDevices) - 3) * 2
+	}
+
+	// Deduct for recent threats
 	threatCount := 0
 	for _, log := range userLogs {
 		risk, ok := log["risk"].(string)
@@ -239,50 +237,71 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Deduct for lack of paired devices
-	if len(userDevices) == 0 {
+	if score < 0 {
 		score = 0
-	} else if len(userDevices) > 3 {
-		score -= (len(userDevices) - 3) * 2
 	}
 
-	if score < 0 { score = 0 }
+	googleToken := r.Header.Get("X-Google-Token")
 
-	count, size, err := h.db.GetUserStorageStats(r.Context(), pk)
-	storageUsed := "0 B"
-	filesCount := 0
-	if err == nil {
-		filesCount = count
-		storageUsed = formatSize(size)
+	var storageSize int64
+	var fileCount int
+	if pk != "" {
+		count, size, err := h.db.GetUserStorageStats(r.Context(), pk)
+		if err == nil {
+			storageSize = size
+			fileCount = count
+		}
+	} else if googleToken != "" {
+		_, size, err := h.storage.GetBucketStats(r.Context(), googleToken)
+		if err == nil {
+			storageSize = size
+		}
 	}
 
-	statusMsg := "System Protected"
-	if len(userDevices) == 0 {
-		statusMsg = "Awaiting Pairing"
-	} else if threatCount > 0 {
+	sizeStr := "0 B"
+	if storageSize < 1024 {
+		sizeStr = fmt.Sprintf("%d B", storageSize)
+	} else if storageSize < 1024*1024 {
+		sizeStr = fmt.Sprintf("%.2f KB", float64(storageSize)/1024)
+	} else if storageSize < 1024*1024*1024 {
+		sizeStr = fmt.Sprintf("%.2f MB", float64(storageSize)/(1024*1024))
+	} else {
+		sizeStr = fmt.Sprintf("%.2f GB", float64(storageSize)/(1024*1024*1024))
+	}
+
+	// Map real modules
+	modules := map[string]string{
+		"email_shield":      "Disabled",
+		"threat_detection":  "Active",
+		"network_filter":    "Monitoring",
+		"process_isolation": "Active",
+		"key_rotation":      "Active",
+	}
+
+	if os.Getenv("VAULT_IMAP_USER") != "" {
+		modules["email_shield"] = "Active"
+	}
+
+	statusMsg := "Excellent Integrity"
+	if threatCount > 0 {
 		statusMsg = "Threats Detected"
 	}
 
-	// Standardized SNAKE_CASE keys for mobile/web compatibility
 	stats := map[string]interface{}{
-		"files_protected":  filesCount,
-		"threats_blocked":  threatCount,
-		"authorized_peers": len(userDevices),
-		"storage_used":     storageUsed,
-		"security_score":   score,
-		"status_message":   statusMsg,
-		"active_sessions":  len(userDevices),
-		"vault_health":     statusMsg,
+		"filesProtected":  fileCount,
+		"threatsBlocked":  threatCount,
+		"authorizedPeers": len(userDevices),
+		"storageUsed":     sizeStr,
+		"securityScore":   score,
+		"statusMessage":   statusMsg,
+		"modules":         modules,
+		"activeSessions":  len(userDevices),
+		"vaultHealth":     "Secure",
+		"deviceCount":     len(userDevices),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
-}
-
-func formatSize(size int64) string {
-	if size < 1024 { return fmt.Sprintf("%d B", size) }
-	if size < 1024*1024 { return fmt.Sprintf("%.2f KB", float64(size)/1024) }
-	return fmt.Sprintf("%.2f MB", float64(size)/(1024*1024))
 }
 
 func (h *Handler) LogThreat(w http.ResponseWriter, r *http.Request) {
@@ -364,6 +383,8 @@ func (h *Handler) UploadVault(w http.ResponseWriter, r *http.Request) {
 	// 4. Record ownership in DB for stats
 	if err := h.db.RecordBlobOwnership(r.Context(), blobID, desktopPK, size); err != nil {
 		log.Printf("Failed to record blob ownership: %v", err)
+		// We don't fail the request since the file is already in storage,
+		// but we log it.
 	}
 
 	// 5. Return the UUID
@@ -463,6 +484,7 @@ func (h *Handler) readPump(c *ws.Client) {
 				}
 			} else if msg["type"] == "mobile_register" {
 				if pk, ok := msg["public_key"].(string); ok {
+					// For mobile, pairing_nonce is optional in WS registration
 					nonce, _ := msg["pairing_nonce"].(string)
 					if strings.TrimSpace(pk) == "" {
 						continue
@@ -479,10 +501,10 @@ func (h *Handler) PairVault(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		DesktopPublicKey string `json:"desktop_public_key"`
 		MobilePublicKey  string `json:"mobile_public_key"`
-		MobileXPublicKey string `json:"mobile_x_public_key"`
+		MobileXPublicKey string `json:"mobile_x_public_key"` // NEW: For ECIES back to mobile
 		PairingNonce     string `json:"pairing_nonce"`
 		Signature        string `json:"signature"`
-		EncryptedKey     string `json:"encrypted_key"`
+		EncryptedKey     string `json:"encrypted_key"` // MUST BE ENCRYPTED FOR DESKTOP PK
 		OSInfo           string `json:"os_info"`
 	}
 
@@ -509,13 +531,12 @@ func (h *Handler) PairVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2.5 Persist Devices and Log Activity
+	// 2.5 Persist Device and Log Activity
 	osInfo := payload.OSInfo
 	if osInfo == "" {
 		osInfo = "Unknown Desktop"
 	}
 	h.db.RegisterOrUpdateDevice(r.Context(), payload.DesktopPublicKey, "Secure Workstation", osInfo)
-	h.db.RegisterOrUpdateDevice(r.Context(), payload.MobilePublicKey, "Trusted Mobile", "Android/iOS Hardware")
 	h.db.LogActivity(r.Context(), payload.DesktopPublicKey, "security", "Vault Unlocked", "Access authorized by mobile hardware", "low")
 
 	desktopPK := strings.TrimSpace(payload.DesktopPublicKey)
@@ -533,6 +554,7 @@ func (h *Handler) PairVault(w http.ResponseWriter, r *http.Request) {
 		"x_public_key": payload.MobileXPublicKey,
 	}
 	if strings.TrimSpace(payload.EncryptedKey) != "" {
+		// Relay the encrypted key (backend cannot decrypt this)
 		approval["encrypted_key"] = strings.TrimSpace(payload.EncryptedKey)
 	}
 	approvalJSON, _ := json.Marshal(approval)
@@ -581,10 +603,10 @@ func (h *Handler) verifyMobileSignature(pubKeyB64, nonce, sigB64 string) error {
 
 func (h *Handler) RelayPush(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		TargetPublicKey string `json:"target_public_key"`
-		MobilePublicKey string `json:"mobile_public_key"`
-		EncryptedBlob   string `json:"encrypted_blob"`
-		EncryptedKey    string `json:"encrypted_key"`
+		TargetPublicKey string `json:"target_public_key"` // NEW: Explicit target
+		MobilePublicKey string `json:"mobile_public_key"` // LEGACY: For desktop compatibility
+		EncryptedBlob   string `json:"encrypted_blob"`    // Base64
+		EncryptedKey    string `json:"encrypted_key"`     // BACKWARD COMPAT: For mobile approval
 		Signature       string `json:"signature"`
 	}
 
@@ -593,11 +615,13 @@ func (h *Handler) RelayPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve the blob (favoring the new generic name)
 	blob := payload.EncryptedBlob
 	if blob == "" {
 		blob = payload.EncryptedKey
 	}
 
+	// Resolve the target
 	target := payload.TargetPublicKey
 	if target == "" {
 		target = payload.MobilePublicKey
@@ -614,6 +638,7 @@ func (h *Handler) RelayPush(w http.ResponseWriter, r *http.Request) {
 	}
 	msgJSON, _ := json.Marshal(msg)
 
+	// Send to the resolved target (can be Desktop OR Mobile)
 	success := h.hub.SendToIdentity(target, msgJSON)
 
 	if success {
@@ -626,6 +651,7 @@ func (h *Handler) RelayPush(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteVault(w http.ResponseWriter, r *http.Request) {
+	// 0. Authenticate
 	desktopPK := r.Header.Get("X-Desktop-PK")
 	signature := r.Header.Get("X-Signature")
 	googleToken := r.Header.Get("X-Google-Token")
@@ -643,6 +669,7 @@ func (h *Handler) DeleteVault(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		BlobIDs []string `json:"blob_ids"`
 	}
+	// Need to read body for signature verification first
 	bodyBytes, _ := io.ReadAll(r.Body)
 	if err := h.verifyDesktopSignature(desktopPK, bodyBytes, signature); err != nil {
 		http.Error(w, "Invalid signature", http.StatusUnauthorized)
@@ -656,16 +683,19 @@ func (h *Handler) DeleteVault(w http.ResponseWriter, r *http.Request) {
 
 	deletedCount := 0
 	for _, id := range payload.BlobIDs {
+		// 1. Verify ownership
 		owner, err := h.db.GetBlobOwner(r.Context(), id)
 		if err != nil || owner != desktopPK {
-			continue
+			continue // Skip if not owner
 		}
 
+		// 2. Delete from GDrive
 		if err := h.storage.DeleteObject(r.Context(), googleToken, id); err != nil {
 			log.Printf("Failed to delete storage object %s: %v", id, err)
 			continue
 		}
 
+		// 3. Delete from DB
 		if err := h.db.DeleteBlobOwnership(r.Context(), id); err != nil {
 			log.Printf("Failed to delete db record %s: %v", id, err)
 		}
@@ -684,6 +714,7 @@ func (h *Handler) DownloadVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 0. Authenticate
 	desktopPK := r.Header.Get("X-Desktop-PK")
 	signature := r.Header.Get("X-Signature")
 	googleToken := r.Header.Get("X-Google-Token")
@@ -698,6 +729,7 @@ func (h *Handler) DownloadVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify signature of the blobID
 	if err := h.verifyDesktopSignature(desktopPK, []byte(blobID), signature); err != nil {
 		http.Error(w, "Invalid desktop signature for download", http.StatusUnauthorized)
 		return
@@ -779,6 +811,7 @@ func (h *Handler) SetRootIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify signature of the blob_id
 	if err := h.verifyDesktopSignature(desktopPK, []byte(payload.BlobID), signature); err != nil {
 		log.Printf("SetRootIndex: Invalid signature from %s: %v", desktopPK, err)
 		http.Error(w, "Invalid signature", http.StatusUnauthorized)

@@ -25,7 +25,7 @@ func NewRouter(h *Handler) *chi.Mux {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"},
+		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Desktop-PK", "X-Signature", "X-Google-Token"},
 		ExposedHeaders:   []string{"Link"},
@@ -54,10 +54,10 @@ func NewRouter(h *Handler) *chi.Mux {
 
 	r.Get("/api/ws/connect", h.WsConnect)
 
-	// --- NEW: Web App Specific Endpoints (Separated from Native) ---
+	// --- NEW: Web App Specific Endpoints (Isolated from Native) ---
 	r.Route("/api/web", func(r chi.Router) {
 		r.Use(cors.Handler(cors.Options{
-			AllowedOrigins:   []string{"*"},
+			AllowedOrigins:   []string{"*"}, // Permissive for Cloudflare Pages
 			AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
 			AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 			AllowCredentials: false,
