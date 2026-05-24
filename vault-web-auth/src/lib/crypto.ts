@@ -109,18 +109,31 @@ function ieeeToAsn1(ieeeSig: Uint8Array): Uint8Array {
 }
 
 /**
- * Hashes a PIN with a salt using SHA-256 to mirror native Android MessageDigest logic.
+ * Hashes a PIN with a salt using PBKDF2-HMAC-SHA256 with 310,000 iterations.
+ * This is the Gold Standard for local security on mobile browsers.
+ * Sourced from OWASP 2025 recommendations and high-security implementations.
  */
 export async function hashPin(pin: string, salt: Uint8Array): Promise<string> {
   const encoder = new TextEncoder();
-  const pinBytes = encoder.encode(pin);
-  
-  // Combine salt + pin
-  const combined = new Uint8Array(salt.length + pinBytes.length);
-  combined.set(salt);
-  combined.set(pinBytes, salt.length);
-  
-  const hashBuffer = await window.crypto.subtle.digest('SHA-256', combined);
+  const baseKey = await window.crypto.subtle.importKey(
+    'raw', 
+    encoder.encode(pin), 
+    'PBKDF2', 
+    false, 
+    ['deriveBits']
+  );
+
+  const hashBuffer = await window.crypto.subtle.deriveBits(
+    { 
+      name: 'PBKDF2', 
+      salt: salt.buffer as ArrayBuffer, 
+      iterations: 310000, 
+      hash: 'SHA-256' 
+    },
+    baseKey,
+    256 // derived bit length
+  );
+
   return uint8ArrayToBase64(new Uint8Array(hashBuffer));
 }
 

@@ -28,7 +28,7 @@ function App() {
   const [pairingData, setPairingData] = useState<PairingData | null>(null);
   
   // App Lock State (Mirrors 'isAppLocked' in native)
-  const [isAppLocked, setIsAppLocked] = useState(true);
+  const [isAppLocked, setIsAppLocked] = useState(false); // Default false, only set true after init finds PIN
   const [showPinFallback, setShowPinFallback] = useState(false);
   const [biometricPending, setBiometricPending] = useState(false);
   const [biometricStatus, setBiometricStatus] = useState<string>('');
@@ -59,37 +59,56 @@ function App() {
 
   useEffect(() => {
     async function init() {
-      const pk = await db.getIdentityPublicKey();
-      const pin = await db.getPinHash();
-      const pd = await db.getPairingData();
-      
-      setIdentityPK(pk);
-      setPairingData(pd);
+      console.log('[DEBUG] Initializing Secure Vault DB...');
+      try {
+        await db.robustOpen();
+        
+        const [pk, pin, salt, pd] = await Promise.all([
+          db.getIdentityPublicKey(),
+          db.getPinHash(),
+          db.getPinSalt(),
+          db.getPairingData()
+        ]);
+        
+        console.log('[DEBUG] Security State Check:', { 
+          hasIdentity: !!pk, 
+          hasPin: !!pin, 
+          hasSalt: !!salt, 
+          isPaired: !!pd 
+        });
 
-      if (!pk) {
-        setState('onboarding');
-        // NATIVE MIRROR: Generate identity key pair immediately on launch/onboarding start
-        (async () => {
-          try {
-            const { publicKey, privateKey } = await crypto.generateIdentity();
-            const { privateKey: xPriv } = crypto.generateX25519KeyPair();
-            const pkB64 = await crypto.exportPublicKey(publicKey);
-            const xPrivB64 = crypto.uint8ArrayToBase64(xPriv);
-            await db.saveIdentity(pkB64, privateKey);
-            await db.saveXPrivateKey(xPrivB64);
-            setIdentityPK(pkB64);
-            console.log('Hardware identity generated on launch.');
-          } catch (e) {
-            console.error('Initial identity generation failed', e);
-          }
-        })();
-      } else if (!pin) {
-        setState('security-setup');
-      } else {
-        setState('main');
-        setVaultStatus(pd ? 'Locked' : 'Unpaired');
-        // Initial state is LOCKED until user biometric/PINs in
-        setIsAppLocked(true);
+        setIdentityPK(pk);
+        setPairingData(pd);
+
+        if (!pk) {
+          setState('onboarding');
+          // NATIVE MIRROR: Generate identity key pair immediately on launch/onboarding start
+          (async () => {
+            try {
+              const { publicKey, privateKey } = await crypto.generateIdentity();
+              const { privateKey: xPriv } = crypto.generateX25519KeyPair();
+              const pkB64 = await crypto.exportPublicKey(publicKey);
+              const xPrivB64 = crypto.uint8ArrayToBase64(xPriv);
+              await db.saveIdentity(pkB64, privateKey);
+              await db.saveXPrivateKey(xPrivB64);
+              setIdentityPK(pkB64);
+              console.log('Hardware identity generated and saved.');
+            } catch (e) {
+              console.error('Initial identity generation failed', e);
+            }
+          })();
+        } else if (!pin || !salt) {
+          console.warn('[DEBUG] PIN or Salt missing from hardware memory. Forcing Setup.');
+          setState('security-setup');
+        } else {
+          setState('main');
+          setVaultStatus(pd ? 'Locked' : 'Unpaired');
+          // Initial state is LOCKED until user biometric/PINs in
+          setIsAppLocked(true);
+        }
+      } catch (e: any) {
+        console.error('[CRITICAL] DB Initialization failed:', e);
+        alert(`Storage Error: ${e.message || 'Database failed to open'}. Please ensure you are not in Incognito mode.`);
       }
     }
     init();
@@ -414,12 +433,16 @@ function App() {
   };
 
   const showBiometricDebug = async () => {
-    const enabled = await db.isBiometricsEnabled();
-    const credId = await db.getBiometricCredentialId();
-    const hasPin = !!(await db.getPinHash());
-    const hasSalt = !!(await db.getPinSalt());
+    await db.robustOpen();
+    const [enabled, credId, hasPin, hasSalt, pk] = await Promise.all([
+      db.isBiometricsEnabled(),
+      db.getBiometricCredentialId(),
+      db.getPinHash(),
+      db.getPinSalt(),
+      db.getIdentityPublicKey()
+    ]);
     
-    alert(`BIOMETRIC DEBUG:\nEnabled: ${enabled}\nCredID: ${credId ? (credId.substring(0, 10) + '...') : 'NULL'}\nHas PIN: ${hasPin}\nHas Salt: ${hasSalt}`);
+    alert(`HARDWARE SECURITY DEBUG:\n\nIdentity Exists: ${!!pk}\nBiometrics Enabled: ${enabled}\nCredential ID: ${credId ? 'PRESENT' : 'MISSING'}\nPIN Hash: ${hasPin ? 'SAVED' : 'MISSING'}\nPIN Salt: ${hasSalt ? 'SAVED' : 'MISSING'}\n\nProtocol: WebAuthn L3 (SimpleWebAuthn)\nStorage: Dexie.js (IndexedDB)`);
   };
 
   const handlePinUnlockHandshake = async (pin: string) => {
