@@ -229,6 +229,7 @@ fun DevicesScreen() {
                             name = dev["name"] ?: "",
                             os = dev["os"] ?: "",
                             status = DeviceStatus.SECURE,
+                            lastActive = dev["last_active"] ?: "Active",
                             onClick = { selectedDevice = dev["name"] }
                         )
                     }
