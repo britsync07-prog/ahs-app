@@ -291,38 +291,76 @@ function App() {
     setState('main');
     setIsProcessing(true);
     try {
-      const payload = JSON.parse(decodedText);
+      let payload;
+      try {
+        payload = JSON.parse(decodedText);
+      } catch (e) {
+        throw new Error('Invalid QR code format. Not a valid JSON payload.');
+      }
+
+      console.log('Parsed QR payload:', payload);
       const { backend_url, desktop_public_key, desktop_x_public_key, pairing_nonce } = payload;
       
       const identityPriv = await db.getIdentityPrivateKey();
       const xPriv = await db.getXPrivateKey();
       
-      if (!identityPK || !identityPriv || !xPriv) throw new Error('Identity not found');
+      if (!identityPK || !identityPriv || !xPriv) {
+        console.error('Keys missing:', { identityPK: !!identityPK, identityPriv: !!identityPriv, xPriv: !!xPriv });
+        throw new Error('Local security identity not found. Please regenerate identity in Settings.');
+      }
 
+      // NATIVE MIRROR: Ask for FaceID/Fingerprint DURING pairing scan
+      console.log('Requesting biometric enrollment during pairing...');
+      let biometricData;
+      try {
+        biometricData = await registerBiometric('User');
+        if (biometricData) {
+          await db.setBiometricCredentialId(biometricData.id);
+          await db.setBiometricPublicKey(biometricData.publicKey);
+          await db.setBiometricsEnabled(true);
+          console.log('Biometric registration successful during pairing.');
+        }
+      } catch (bioErr) {
+        console.warn('Biometric enrollment skipped during pairing, continuing with identity key only.', bioErr);
+      }
+
+      console.log('Signing pairing request...');
       const signature = await crypto.signData(identityPriv, pairing_nonce);
       
-      // Native calls 'pairWithDesktop' which uses WebSocket to receive master key
-      await pairDevice(
+      console.log('Sending pairing request to backend:', backend_url);
+      const result = await pairDevice(
         backend_url,
         desktop_public_key,
         identityPK,
         crypto.uint8ArrayToBase64(crypto.x25519.getPublicKey(crypto.base64ToUint8Array(xPriv))),
         pairing_nonce,
-        signature
+        signature,
+        biometricData?.id,
+        biometricData?.publicKey
       );
 
-      setPairingData({
+      console.log('Pairing successful result:', result);
+
+      const newPairingData: PairingData = {
         backend_url,
         desktop_public_key,
         desktop_x_public_key,
         pairing_nonce,
-      });
+      };
+
+      await db.savePairingData(newPairingData);
+      setPairingData(newPairingData);
+      setVaultStatus('Locked');
       
-      // We stay in 'main' and wait for WebSocket to push the master key, 
-      // which will then trigger state transition to 'security-setup'.
+      if (result.encrypted_master_key) {
+        console.log('Master key found in pairing result, decrypting...');
+        const masterKey = await crypto.decryptMasterKey(result.encrypted_master_key, xPriv);
+        await db.saveMasterKey(masterKey);
+        console.log('Master key saved.');
+      }
     } catch (err: any) {
       console.error('Pairing failed:', err);
-      alert(`Pairing failed: ${err.message || 'Unknown error'}`);
+      alert(`Pairing failed: ${err.message || 'Unknown error'}\n\nCheck if your backend is accessible at the URL shown in the logs.`);
     } finally {
       setIsProcessing(false);
     }

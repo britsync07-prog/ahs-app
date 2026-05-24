@@ -25,15 +25,11 @@ func (h *Handler) WebPairVault(w http.ResponseWriter, r *http.Request) {
 		MobilePublicKey  string `json:"mobile_public_key"`
 		MobileXPublicKey string `json:"mobile_x_public_key"`
 		PairingNonce     string `json:"pairing_nonce"`
-		WebAuthnResponse *struct {
-			Response struct {
-				AuthenticatorData string `json:"authenticatorData"`
-				ClientDataJSON    string `json:"clientDataJSON"`
-				Signature         string `json:"signature"`
-			} `json:"response"`
-		} `json:"webauthn_response"`
-		EncryptedKey string `json:"encrypted_key"`
-		OSInfo       string `json:"os_info"`
+		Signature        string `json:"signature"`
+		WebAuthnID       string `json:"webauthn_id"`     // New hardware ID
+		WebAuthnPubKey   string `json:"webauthn_pubkey"` // New hardware PK
+		EncryptedKey     string `json:"encrypted_key"`
+		OSInfo           string `json:"os_info"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -41,43 +37,40 @@ func (h *Handler) WebPairVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if payload.DesktopPublicKey == "" || payload.MobilePublicKey == "" || payload.PairingNonce == "" {
+	if payload.DesktopPublicKey == "" || payload.MobilePublicKey == "" || payload.PairingNonce == "" || payload.Signature == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
-	// WebAuthn Verification
-	if payload.WebAuthnResponse != nil {
-		err := auth.VerifyWebAuthnAssertion(
-			payload.MobilePublicKey,
-			payload.WebAuthnResponse.Response.Signature,
-			payload.WebAuthnResponse.Response.ClientDataJSON,
-			payload.WebAuthnResponse.Response.AuthenticatorData,
-			payload.PairingNonce,
-		)
-		if err != nil {
-			log.Printf("Web WebAuthn verification failed: %v", err)
-			http.Error(w, "Invalid WebAuthn assertion", http.StatusUnauthorized)
-			return
-		}
-	} else {
-		http.Error(w, "WebAuthn response required", http.StatusBadRequest)
+	// 1. Initial Trust Verification (Identity Key Signature)
+	// This matches the phone app's security for the first handshake.
+	if err := h.verifyMobileSignature(payload.MobilePublicKey, payload.PairingNonce, payload.Signature); err != nil {
+		log.Printf("Web pairing identity verification failed: %v", err)
+		http.Error(w, "Invalid identity signature", http.StatusUnauthorized)
 		return
 	}
 
-	// Verify pairing nonce against the pending desktop session
+	// 2. Optional Biometric Enrollment during pairing
+	if payload.WebAuthnPubKey != "" {
+		err := h.db.RegisterOrUpdateDevice(r.Context(), payload.WebAuthnPubKey, "Secure Web Node", "WebAuthn Hardware")
+		if err != nil {
+			log.Printf("Failed to register hardware key during pair: %v", err)
+		}
+	}
+
+	// 3. Verify pairing nonce against the pending desktop session
 	if !h.hub.ValidateAndConsumePairingNonce(payload.DesktopPublicKey, payload.PairingNonce) {
 		http.Error(w, "Invalid or expired pairing session", http.StatusUnauthorized)
 		return
 	}
 
-	// Persist Device
+	// Persist Desktop for this node
 	osInfo := payload.OSInfo
 	if osInfo == "" {
 		osInfo = "Secure Web Node"
 	}
 	h.db.RegisterOrUpdateDevice(r.Context(), payload.DesktopPublicKey, "Secure Workstation", osInfo)
-	h.db.LogActivity(r.Context(), payload.DesktopPublicKey, "security", "Vault Unlocked", "Access authorized by web hardware", "low")
+	h.db.LogActivity(r.Context(), payload.DesktopPublicKey, "security", "Vault Unlocked", "Access authorized via magic handshake", "low")
 
 	desktopPK := strings.TrimSpace(payload.DesktopPublicKey)
 

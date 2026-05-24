@@ -22,7 +22,8 @@ export async function pairDevice(
   mobileXPK: string,
   nonce: string,
   signature: string,
-  webauthnResponse?: any
+  webauthnId?: string,
+  webauthnPubKey?: string
 ) {
   const response = await fetch(`${backendUrl}/api/web/pair`, {
     method: 'POST',
@@ -33,7 +34,8 @@ export async function pairDevice(
       mobile_x_public_key: mobileXPK,
       pairing_nonce: nonce,
       signature: signature,
-      webauthn_response: webauthnResponse, // NEW: Full WebAuthn assertion
+      webauthn_id: webauthnId,
+      webauthn_pubkey: webauthnPubKey,
       os_info: navigator.userAgent
     }),
   });
