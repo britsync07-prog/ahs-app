@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // decodeBase64 is a robust decoder that handles standard, URL-safe, and unpadded base64.
