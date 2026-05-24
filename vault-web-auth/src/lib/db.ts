@@ -1,6 +1,10 @@
-const DB_NAME = 'VaultAuthDB';
-const DB_VERSION = 1;
-const STORE_NAME = 'settings';
+import { get, set, del, clear } from 'idb-keyval';
+
+/**
+ * Robust persistence layer using 'idb-keyval', the industry standard 
+ * for cross-browser IndexedDB management (Sourced from jakearchibald/idb-keyval).
+ * This ensures reliability on Android Chrome and iOS Safari.
+ */
 
 export interface PairingData {
   desktop_public_key: string;
@@ -10,168 +14,52 @@ export interface PairingData {
 }
 
 class VaultDB {
-  private db: IDBDatabase | null = null;
-  private initPromise: Promise<void> | null = null;
-
-  async init(): Promise<void> {
-    if (this.db) return;
-    if (this.initPromise) return this.initPromise;
-
-    this.initPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-      request.onupgradeneeded = (event) => {
-        const db = (event.target as IDBOpenDBRequest).result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME);
-        }
-      };
-
-      request.onsuccess = (event) => {
-        this.db = (event.target as IDBOpenDBRequest).result;
-        resolve();
-      };
-
-      request.onerror = (event) => {
-        this.initPromise = null;
-        reject((event.target as IDBOpenDBRequest).error);
-      };
-    });
-
-    return this.initPromise;
-  }
-
+  // Generic methods
   async get<T>(key: string): Promise<T | null> {
-    await this.init();
-    return new Promise((resolve, reject) => {
-      const transaction = this.db!.transaction(STORE_NAME, 'readonly');
-      const store = transaction.objectStore(STORE_NAME);
-      const request = store.get(key);
-
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => reject(request.error);
-    });
+    const val = await get(key);
+    return val !== undefined ? (val as T) : null;
   }
 
   async set(key: string, value: unknown): Promise<void> {
-    await this.init();
-    return new Promise((resolve, reject) => {
-      const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
-      const store = transaction.objectStore(STORE_NAME);
-      const request = store.put(value, key);
-
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await set(key, value);
   }
 
   async delete(key: string): Promise<void> {
-    await this.init();
-    return new Promise((resolve, reject) => {
-      const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
-      const store = transaction.objectStore(STORE_NAME);
-      const request = store.delete(key);
-
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await del(key);
   }
 
-  // Helper methods for specific items
+  // Specific helpers to match current App usage
+  async getIdentityPublicKey() { return this.get<string>('identity_public_key'); }
+  async getIdentityPrivateKey() { return this.get<CryptoKey>('identity_private_key'); }
+  async getXPrivateKey() { return this.get<string>('x_private_key'); }
+  async getMasterKey() { return this.get<string>('master_key'); }
+  async getPinHash() { return this.get<string>('pin_hash'); }
+  async getPinSalt() { return this.get<string>('pin_salt'); }
+  async getDecoyPinHash() { return this.get<string>('decoy_pin_hash'); }
+  async getPairingData() { return this.get<PairingData>('pairing_data'); }
+  async getBiometricCredentialId() { return this.get<string>('biometric_credential_id'); }
+  async getBiometricPublicKey() { return this.get<string>('biometric_public_key'); }
+  async isBiometricsEnabled() { return (await this.get<boolean>('biometrics_enabled')) || false; }
 
-  async getIdentityPublicKey(): Promise<string | null> {
-    return this.get<string>('identity_public_key');
+  async saveIdentity(pk: string, priv: CryptoKey) {
+    await this.set('identity_public_key', pk);
+    await this.set('identity_private_key', priv);
   }
 
-  async getIdentityPrivateKey(): Promise<CryptoKey | null> {
-    return this.get<CryptoKey>('identity_private_key');
-  }
-
-  async getXPrivateKey(): Promise<string | null> {
-    return this.get<string>('x_private_key');
-  }
-
-  async getMasterKey(): Promise<string | null> {
-    return this.get<string>('master_key');
-  }
-
-  async getPinHash(): Promise<string | null> {
-    return this.get<string>('pin_hash');
-  }
-
-  async getPinSalt(): Promise<string | null> {
-    return this.get<string>('pin_salt');
-  }
-
-  async getDecoyPinHash(): Promise<string | null> {
-    return this.get<string>('decoy_pin_hash');
-  }
-
-  async getPairingData(): Promise<PairingData | null> {
-    return this.get<PairingData>('pairing_data');
-  }
-
-  async saveIdentity(publicKey: string, privateKey: CryptoKey): Promise<void> {
-    await this.set('identity_public_key', publicKey);
-    await this.set('identity_private_key', privateKey);
-  }
-
-  async savePinHash(hash: string, salt: string): Promise<void> {
+  async savePinHash(hash: string, salt: string) {
     await this.set('pin_hash', hash);
     await this.set('pin_salt', salt);
   }
 
-  async saveDecoyPinHash(hash: string): Promise<void> {
-    await this.set('decoy_pin_hash', hash);
-  }
+  async saveDecoyPinHash(hash: string) { await this.set('decoy_pin_hash', hash); }
+  async setBiometricsEnabled(e: boolean) { await this.set('biometrics_enabled', e); }
+  async setBiometricCredentialId(id: string) { await this.set('biometric_credential_id', id); }
+  async setBiometricPublicKey(pk: string) { await this.set('biometric_public_key', pk); }
+  async saveXPrivateKey(priv: string) { await this.set('x_private_key', priv); }
+  async saveMasterKey(key: string) { await this.set('master_key', key); }
+  async savePairingData(data: PairingData) { await this.set('pairing_data', data); }
 
-  async setBiometricsEnabled(enabled: boolean): Promise<void> {
-    await this.set('biometrics_enabled', enabled);
-  }
-
-  async setBiometricCredentialId(id: string): Promise<void> {
-    await this.set('biometric_credential_id', id);
-  }
-
-  async setBiometricPublicKey(publicKey: string): Promise<void> {
-    await this.set('biometric_public_key', publicKey);
-  }
-
-  async getBiometricCredentialId(): Promise<string | null> {
-    return await this.get<string>('biometric_credential_id');
-  }
-
-  async getBiometricPublicKey(): Promise<string | null> {
-    return await this.get<string>('biometric_public_key');
-  }
-
-  async isBiometricsEnabled(): Promise<boolean> {
-    return (await this.get<boolean>('biometrics_enabled')) || false;
-  }
-
-  async saveXPrivateKey(privateKey: string): Promise<void> {
-    await this.set('x_private_key', privateKey);
-  }
-
-  async saveMasterKey(key: string): Promise<void> {
-    await this.set('master_key', key);
-  }
-
-  async savePairingData(data: PairingData): Promise<void> {
-    await this.set('pairing_data', data);
-  }
-
-  async clearAll(): Promise<void> {
-    await this.init();
-    return new Promise((resolve, reject) => {
-      const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
-      const store = transaction.objectStore(STORE_NAME);
-      const request = store.clear();
-
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-  }
+  async clearAll() { await clear(); }
 }
 
 export const db = new VaultDB();

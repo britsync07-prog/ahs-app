@@ -235,23 +235,26 @@ function App() {
       const pinHash = await crypto.hashPin(tempPin, salt);
       
       await db.savePinHash(pinHash, saltB64);
-      console.log('[DEBUG] PIN hash and salt saved successfully');
-
+      
       if (tempDecoyPin) {
         console.log('[DEBUG] Saving decoy PIN hash...');
         const decoyHash = await crypto.hashPin(tempDecoyPin, salt);
         await db.saveDecoyPinHash(decoyHash);
-        console.log('[DEBUG] Decoy PIN saved');
       }
 
-      // FINAL VERIFICATION before moving to main
-      const verifyHash = await db.getPinHash();
-      const verifySalt = await db.getPinSalt();
-      if (!verifyHash || !verifySalt) {
-        throw new Error('Persistence check failed: PIN hash/salt missing after save');
+      console.log('[DEBUG] PIN hash and salt saved. Verifying persistence...');
+
+      // INDUSTRY STANDARD: Mandatory Read-Back Verification
+      const [vHash, vSalt] = await Promise.all([
+        db.getPinHash(), 
+        db.getPinSalt(),
+      ]);
+      
+      if (!vHash || !vSalt) {
+        throw new Error('Device Storage Failure: Security data not found after save.');
       }
 
-      console.log('[DEBUG] Security setup verified in DB. Finishing...');
+      console.log('[DEBUG] Persistence verified. Moving to main state.');
       setState('main');
       setIsAppLocked(false);
       

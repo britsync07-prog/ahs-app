@@ -16,6 +16,7 @@
     "@simplewebauthn/browser": "^13.3.0",
     "base64-js": "^1.5.1",
     "html5-qrcode": "^2.3.8",
+    "idb-keyval": "^6.2.4",
     "lucide-react": "^1.16.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
