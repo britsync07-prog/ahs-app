@@ -1,11 +1,11 @@
 package auth
 
 import (
-	"bytes"
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
