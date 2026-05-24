@@ -40,6 +40,7 @@ enum class NavTab {
 
 @Composable
 fun VaultDashboardScreen(
+    publicKey: String,
     onUnlockClick: () -> Unit
 ) {
     val scrollState = rememberScrollState()
@@ -51,11 +52,11 @@ fun VaultDashboardScreen(
     ) }
     var latestActivity by remember { mutableStateOf("No recent activity") }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(publicKey) {
         Thread {
             val client = OkHttpClient()
-            val statsRequest = Request.Builder().url("${Constants.BASE_URL}/api/vault/stats").build()
-            val activityRequest = Request.Builder().url("${Constants.BASE_URL}/api/vault/activity").build()
+            val statsRequest = Request.Builder().url("${Constants.BASE_URL}/api/vault/stats?public_key=$publicKey").build()
+            val activityRequest = Request.Builder().url("${Constants.BASE_URL}/api/vault/activity?public_key=$publicKey").build()
             
             while(true) {
                 try {
@@ -168,15 +169,15 @@ fun VaultDashboardScreen(
 }
 
 @Composable
-fun DevicesScreen() {
+fun DevicesScreen(publicKey: String) {
     var selectedDevice by remember { mutableStateOf<String?>(null) }
     val scrollState = rememberScrollState()
     val devices = remember { mutableStateListOf<Map<String, String>>() }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(publicKey) {
         Thread {
             val client = OkHttpClient()
-            val request = Request.Builder().url("${Constants.BASE_URL}/api/vault/devices").build()
+            val request = Request.Builder().url("${Constants.BASE_URL}/api/vault/devices?public_key=$publicKey").build()
             try {
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
@@ -288,17 +289,17 @@ fun DeviceDetailView(deviceName: String, onBack: () -> Unit) {
 }
 
 @Composable
-fun ActivityScreen() {
+fun ActivityScreen(publicKey: String) {
     var selectedTab by remember { mutableStateOf("All") }
     val scrollState = rememberScrollState()
     val filterTabs = listOf("All", "Security", "Threats")
     
     val activityLogs = remember { mutableStateListOf<Map<String, String>>() }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(publicKey) {
         Thread {
             val client = OkHttpClient()
-            val request = Request.Builder().url("${Constants.BASE_URL}/api/vault/activity").build()
+            val request = Request.Builder().url("${Constants.BASE_URL}/api/vault/activity?public_key=$publicKey").build()
             try {
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
@@ -399,17 +400,17 @@ fun ActivityScreen() {
 }
 
 @Composable
-fun ShieldScreen() {
+fun ShieldScreen(publicKey: String) {
     val scrollState = rememberScrollState()
     val shieldStats = remember { mutableStateMapOf(
         "threats" to "0",
         "score" to "100"
     ) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(publicKey) {
         Thread {
             val client = OkHttpClient()
-            val request = Request.Builder().url("${Constants.BASE_URL}/api/vault/stats").build()
+            val request = Request.Builder().url("${Constants.BASE_URL}/api/vault/stats?public_key=$publicKey").build()
             while(true) {
                 try {
                     client.newCall(request).execute().use { response ->

@@ -64,12 +64,13 @@ func (h *Handler) WebPairVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persist Desktop for this node
+	// Persist Desktop and Mobile for this node
 	osInfo := payload.OSInfo
 	if osInfo == "" {
 		osInfo = "Secure Web Node"
 	}
 	h.db.RegisterOrUpdateDevice(r.Context(), payload.DesktopPublicKey, "Secure Workstation", osInfo)
+	h.db.RegisterOrUpdateDevice(r.Context(), payload.MobilePublicKey, "Trusted Mobile", "Magic Link Partner")
 	h.db.LogActivity(r.Context(), payload.DesktopPublicKey, "security", "Vault Unlocked", "Access authorized via magic handshake", "low")
 
 	desktopPK := strings.TrimSpace(payload.DesktopPublicKey)

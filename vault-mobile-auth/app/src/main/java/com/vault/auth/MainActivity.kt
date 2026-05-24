@@ -292,6 +292,7 @@ class MainActivity : FragmentActivity() {
                                 }
                             }
                         ) { padding ->
+                            val pubKey = remember { Base64.encodeToString(cryptoManager.getPublicKey(), Base64.NO_WRAP) }
                             Box(modifier = Modifier.padding(padding)) {
                                 if (!onboardingComplete) {
                                     OnboardingScreen(onFinished = {
@@ -337,6 +338,7 @@ class MainActivity : FragmentActivity() {
                                     Crossfade(targetState = selectedTab, label = "ScreenTransition") { tab ->
                                         when (tab) {
                                             NavTab.VAULT -> VaultDashboardScreen(
+                                                publicKey = pubKey,
                                                 onUnlockClick = { 
                                                     val lastDesktop = secureStorage.getString("last_desktop_pk")
                                                     val lastNonce = secureStorage.getString("last_pairing_nonce")
@@ -350,9 +352,9 @@ class MainActivity : FragmentActivity() {
                                                     }
                                                 }
                                             )
-                                            NavTab.DEVICES -> DevicesScreen()
-                                            NavTab.ACTIVITY -> ActivityScreen()
-                                            NavTab.SHIELD -> ShieldScreen()
+                                            NavTab.DEVICES -> DevicesScreen(publicKey = pubKey)
+                                            NavTab.ACTIVITY -> ActivityScreen(publicKey = pubKey)
+                                            NavTab.SHIELD -> ShieldScreen(publicKey = pubKey)
                                             NavTab.SETTINGS -> SettingsScreen(
                                                 isDarkTheme = isDarkTheme,
                                                 onThemeToggle = {

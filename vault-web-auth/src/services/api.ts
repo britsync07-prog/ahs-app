@@ -110,8 +110,8 @@ export async function getActivity(backendUrl: string, publicKey: string) {
   return await response.json();
 }
 
-export async function getDevices(backendUrl: string) {
-  const response = await fetch(`${backendUrl}/api/vault/devices`);
+export async function getDevices(backendUrl: string, publicKey: string) {
+  const response = await fetch(`${backendUrl}/api/vault/devices?public_key=${encodeURIComponent(publicKey)}`);
   
   if (!response.ok) {
     throw new Error(`Failed to fetch devices: ${response.status}`);
