@@ -2,6 +2,7 @@ import React from "react";
 import { Cloud, History, RefreshCcw, HardDrive, Info } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { motion, AnimatePresence } from "framer-motion";
+import { StorageMaintenance } from "./StorageMaintenance";
 
 export const RecoveryCenter: React.FC = () => {
   const [isSyncing, setIsSyncing] = React.useState(false);
@@ -173,6 +174,8 @@ export const RecoveryCenter: React.FC = () => {
                   )}
                   Sync Now
                 </button>
+
+                <StorageMaintenance />
              </div>
            </div>
         </div>

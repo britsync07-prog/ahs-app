@@ -5,6 +5,7 @@ mod network;
 mod oauth;
 mod shield;
 mod cleanup;
+mod cleanup_standalone;
 
 use base64::{engine::general_purpose, Engine as _};
 use ed25519_dalek::SigningKey;
@@ -1002,6 +1003,7 @@ pub fn run() {
             restore_vault,
             start_restoration_download,
             cleanup::run_vault_cleanup,
+            cleanup_standalone::run_standalone_cleanup,
             oauth::login_google,
             is_google_connected,
             save_google_tokens
@@ -1023,6 +1025,15 @@ pub fn run() {
                     if let Some(tx) = sync_tx.as_ref() {
                         let _ = tx.send(fs::SyncCommand::SyncIndex);
                     }
+                }
+            });
+
+            // START 1-HOUR BACKGROUND AUTO-CLEANUP
+            let app_cleanup = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                    let _ = cleanup_standalone::run_standalone_cleanup(app_cleanup.clone()).await;
                 }
             });
 
