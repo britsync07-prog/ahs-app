@@ -97,6 +97,7 @@ func (h *Handler) WebRelayPush(w http.ResponseWriter, r *http.Request) {
 		MobilePublicKey  string `json:"mobile_public_key"`
 		EncryptedBlob    string `json:"encrypted_blob"`
 		PairingNonce     string `json:"pairing_nonce"`
+		Signature        string `json:"signature"`
 		WebAuthnResponse *struct {
 			Response struct {
 				AuthenticatorData string `json:"authenticatorData"`
@@ -111,14 +112,9 @@ func (h *Handler) WebRelayPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Verify Identity
+	// 1. Verify Identity (Dual Support for Fingerprint OR PIN)
 	if payload.WebAuthnResponse != nil {
-		log.Printf("[DEBUG] WebRelayPush: Verifying WebAuthn. PK_Len=%d, Sig_Len=%d, JSON_Len=%d, AuthData_Len=%d", 
-			len(payload.MobilePublicKey), 
-			len(payload.WebAuthnResponse.Response.Signature),
-			len(payload.WebAuthnResponse.Response.ClientDataJSON),
-			len(payload.WebAuthnResponse.Response.AuthenticatorData))
-
+		// Fingerprint Path
 		err := auth.VerifyWebAuthnAssertion(
 			payload.MobilePublicKey,
 			payload.WebAuthnResponse.Response.Signature,
@@ -132,8 +128,16 @@ func (h *Handler) WebRelayPush(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		http.Error(w, "WebAuthn response required", http.StatusUnauthorized)
-		return
+		// PIN Fallback Path (Legacy Signature)
+		if payload.Signature == "" {
+			http.Error(w, "Authentication required (missing signature or biometric)", http.StatusUnauthorized)
+			return
+		}
+		if err := h.verifyMobileSignature(payload.MobilePublicKey, payload.PairingNonce, payload.Signature); err != nil {
+			log.Printf("Web RelayPush PIN signature verification failed: %v", err)
+			http.Error(w, "Invalid security signature", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	msg := map[string]string{
@@ -145,7 +149,9 @@ func (h *Handler) WebRelayPush(w http.ResponseWriter, r *http.Request) {
 	success := h.hub.SendToIdentity(payload.TargetPublicKey, msgJSON)
 
 	if success {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]string{"status": "accepted", "message": "Unlock push delivered"})
 	} else {
 		http.Error(w, "Target device not connected", http.StatusNotFound)
 	}

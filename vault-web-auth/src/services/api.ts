@@ -41,11 +41,17 @@ export async function pairDevice(
   });
 
   if (!response.ok) {
-    const err = await response.text();
-    throw new Error(err || 'Pairing failed');
+    const errText = await response.text();
+    throw new Error(errText || `Pairing failed with status: ${response.status}`);
   }
 
-  return await response.json();
+  // Gracefully handle success with empty or non-JSON body
+  const contentType = response.headers.get("content-type");
+  if (contentType && contentType.indexOf("application/json") !== -1) {
+    return await response.json();
+  } else {
+    return { status: 'success' };
+  }
 }
 
 export async function sendUnlockApproval(
@@ -66,16 +72,22 @@ export async function sendUnlockApproval(
       pairing_nonce: nonce,
       signature: signature,
       encrypted_blob: encryptedBlob,
-      webauthn_response: webauthnResponse // NEW: Full WebAuthn assertion
+      webauthn_response: webauthnResponse // Full WebAuthn assertion
     }),
   });
 
   if (!response.ok) {
-    const err = await response.text();
-    throw new Error(err || 'Failed to send unlock approval');
+    const errText = await response.text();
+    throw new Error(errText || `Unlock failed with status: ${response.status}`);
   }
 
-  return await response.json();
+  // Gracefully handle success with empty or non-JSON body
+  const contentType = response.headers.get("content-type");
+  if (contentType && contentType.indexOf("application/json") !== -1) {
+    return await response.json();
+  } else {
+    return { status: 'success' };
+  }
 }
 
 export async function getVaultStats(backendUrl: string, publicKey: string) {
