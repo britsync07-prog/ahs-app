@@ -773,10 +773,6 @@ func (h *Handler) verifyDesktopSignature(pubKeyB64 string, data []byte, sigB64 s
 func (h *Handler) GetRootIndex(w http.ResponseWriter, r *http.Request) {
 	pk := r.URL.Query().Get("public_key")
 	if pk == "" {
-		pk = r.Header.Get("X-Desktop-PK")
-	}
-
-	if pk == "" {
 		http.Error(w, "public_key required", http.StatusBadRequest)
 		return
 	}

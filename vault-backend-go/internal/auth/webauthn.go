@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 )
 
@@ -71,15 +70,12 @@ func VerifyWebAuthnAssertion(
 	}
 
 	// WebAuthn challenge in JSON is Base64URL encoded version of the original bytes.
-	// We passed the 'expectedChallenge' (nonce string) as the challenge to the browser.
-	// The browser converts that string to bytes, then base64url encodes it.
-	expectedBase64URL := base64.RawURLEncoding.EncodeToString([]byte(expectedChallenge))
-
-	if clientData.Challenge != expectedBase64URL {
-		// FALLBACK: Some browsers might use padded encoding or different formats
-		paddedExpected := base64.URLEncoding.EncodeToString([]byte(expectedChallenge))
-		if clientData.Challenge != paddedExpected && !strings.Contains(string(clientDataJSON), expectedChallenge) {
-			log.Printf("[DEBUG] WebAuthn Challenge Mismatch: Got=%s, Expected=%s", clientData.Challenge, expectedBase64URL)
+	// SimpleWebAuthn library handles this. We just need to check if it's correct.
+	// Since we passed a string (the nonce) as the challenge, the JSON should contain its base64url.
+	if clientData.Challenge != expectedChallenge {
+		// FALLBACK: Sometimes the challenge is hashed or double-encoded depending on the client library.
+		// For robustness, we check if the expected challenge is contained anywhere in the raw JSON.
+		if !strings.Contains(string(clientDataJSON), expectedChallenge) {
 			return errors.New("clientDataJSON challenge mismatch")
 		}
 	}
