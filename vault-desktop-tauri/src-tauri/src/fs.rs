@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 #[cfg(not(windows))]
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
