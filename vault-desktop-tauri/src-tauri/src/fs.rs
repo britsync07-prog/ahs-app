@@ -186,27 +186,33 @@ fn spawn_sync_worker(
                     };
 
                     if let Some(path) = shadow_path {
+                        if crate::drive_mirror::is_hash_unchanged(ino, &path) {
+                            println!("VaultFS Worker: Skipping sync for {} (content unchanged)", name);
+                            PENDING_SYNCS.fetch_sub(1, Ordering::SeqCst);
+                            continue;
+                        }
                         println!("VaultFS Worker: Syncing {} to cloud", name);
-                            if let Ok(id) = crate::crypto::stream_upload_blob(
-                                &worker_config_path,
-                                &path,
-                                worker_key.clone(),
-                            ) {
-                                // Save the cloud blob ID
-                                let mut f_lock = worker_files.lock().unwrap();
-                                if let Some(f) = f_lock.get_mut(&ino) {
-                                    f.cloud_blob_id = Some(id);
-                                }
-                                drop(f_lock);
-
-                                // Purge old blob if it existed
-                                if let Some(oid) = old_id {
-                                    let _ = internal_purge_blobs(&worker_config_path, vec![oid]);
-                                }
-
-                                // CRITICAL: Notify that index needs update!
-                                let _ = sync_tx_clone.send(SyncCommand::SyncIndex);
+                        if let Ok(id) = crate::crypto::stream_upload_blob(
+                            &worker_config_path,
+                            &path,
+                            worker_key.clone(),
+                        ) {
+                            crate::drive_mirror::update_cached_hash(ino, &path);
+                            // Save the cloud blob ID
+                            let mut f_lock = worker_files.lock().unwrap();
+                            if let Some(f) = f_lock.get_mut(&ino) {
+                                f.cloud_blob_id = Some(id);
                             }
+                            drop(f_lock);
+
+                            // Purge old blob if it existed
+                            if let Some(oid) = old_id {
+                                let _ = internal_purge_blobs(&worker_config_path, vec![oid]);
+                            }
+
+                            // CRITICAL: Notify that index needs update!
+                            let _ = sync_tx_clone.send(SyncCommand::SyncIndex);
+                        }
                     }
                     PENDING_SYNCS.fetch_sub(1, Ordering::SeqCst);
                 }
@@ -329,8 +335,9 @@ fn spawn_sync_worker(
                             ) {
                                 let mut f_lock = worker_files.lock().unwrap();
                                 if let Some(f) = f_lock.get_mut(&file.ino) {
-                                    f.shadow_path = Some(shadow_path);
+                                    f.shadow_path = Some(shadow_path.clone());
                                 }
+                                crate::drive_mirror::update_cached_hash(file.ino, &shadow_path);
                                 
                                 // Emit UI event
                                 if let Some(handle) = &app_handle {
@@ -1343,7 +1350,8 @@ impl Filesystem for VaultFS {
                     if let Some(f) = files.get_mut(&ino) {
                         f.shadow_path = Some(shadow_path.clone());
                     }
-                    path = Some(shadow_path);
+                    path = Some(shadow_path.clone());
+                    crate::drive_mirror::update_cached_hash(ino, &shadow_path);
                     drop(files);
                     self.save_local_index();
                     self.notify_ui();
@@ -1404,29 +1412,5 @@ impl Filesystem for VaultFS {
 }
 
 pub fn internal_purge_blobs(config_path: &PathBuf, blob_ids: Vec<String>) -> Result<(), String> {
-    if blob_ids.is_empty() { return Ok(()); }
-    
-    use ed25519_dalek::Signer;
-    use base64::Engine;
-    
-    let payload = serde_json::json!({ "blob_ids": blob_ids });
-    let payload_bytes = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
-    
-    let (sk, pk) = crate::get_or_create_signing_key_at(config_path.clone());
-    let signature = sk.sign(&payload_bytes);
-    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
-    
-    let client = reqwest::blocking::Client::new();
-    let res = client.post(format!("{}/api/vault/delete", crate::config::get_backend_url()))
-        .header("X-Desktop-PK", pk)
-        .header("X-Signature", sig_b64)
-        .json(&payload)
-        .send()
-        .map_err(|e| e.to_string())?;
-        
-    if res.status().is_success() {
-        Ok(())
-    } else {
-        Err(format!("Server returned error: {}", res.status()))
-    }
+    crate::drive_mirror::purge_blobs_direct(config_path, blob_ids)
 }
