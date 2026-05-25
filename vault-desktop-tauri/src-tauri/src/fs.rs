@@ -175,6 +175,35 @@ fn spawn_sync_worker(
 
             match cmd {
                 SyncCommand::SyncFile { ino } => {
+                    let is_ignored = {
+                        let f_lock = worker_files.lock().unwrap();
+                        is_ignored_path(ino, &*f_lock)
+                    };
+
+                    if is_ignored {
+                        let blob_id_to_purge = {
+                            let mut f_lock = worker_files.lock().unwrap();
+                            if let Some(f) = f_lock.get_mut(&ino) {
+                                let id = f.cloud_blob_id.take();
+                                if id.is_some() {
+                                    if let Ok(data) = serde_json::to_string(&*f_lock) {
+                                        let _ = std_fs::write(&worker_local_index_path, data);
+                                    }
+                                }
+                                id
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(blob_id) = blob_id_to_purge {
+                            println!("VaultFS Worker: Purging cloud storage for file moved to trash (blob {})", blob_id);
+                            let _ = internal_purge_blobs(&worker_config_path, vec![blob_id]);
+                            let _ = sync_tx_clone.send(SyncCommand::SyncIndex);
+                        }
+                        PENDING_SYNCS.fetch_sub(1, Ordering::SeqCst);
+                        continue;
+                    }
+
                     let (name, shadow_path, old_id) = {
                         let f_lock = worker_files.lock().unwrap();
                         if let Some(f) = f_lock.get(&ino) {
@@ -262,6 +291,7 @@ fn spawn_sync_worker(
                                     
                                     // 1. Fetch old index ID for purging
                                     let old_index_id = if let Ok(resp) = client.get(format!("{}/api/vault/index", crate::config::get_backend_url()))
+                                        .query(&[("public_key", &pk)])
                                         .header("X-Desktop-PK", &pk)
                                         .send() {
                                             if let Ok(json) = resp.json::<serde_json::Value>() {
@@ -402,6 +432,8 @@ impl VaultFS {
                         if !path.exists() {
                             println!("VaultFS: Shadow path {:?} missing for {}, resetting", path, file.name);
                             file.shadow_path = None;
+                        } else {
+                            crate::drive_mirror::update_cached_hash(file.ino, path);
                         }
                     }
                 }
@@ -413,7 +445,36 @@ impl VaultFS {
             None
         };
 
-        let initial_files = restored.unwrap_or(files);
+        let pq_inner = Arc::new((Mutex::new(PriorityQueue::new()), Condvar::new()));
+        let tx = PrioritySender { inner: pq_inner.clone() };
+
+        let mut initial_files = restored.unwrap_or(files);
+        let mut orphaned_inos = Vec::new();
+        for &ino in initial_files.keys() {
+            if !traces_to_root(ino, &initial_files) {
+                orphaned_inos.push(ino);
+            }
+        }
+        if !orphaned_inos.is_empty() {
+            println!("VaultFS: Found {} orphaned index entries, healing...", orphaned_inos.len());
+            for ino in orphaned_inos {
+                if let Some(file) = initial_files.remove(&ino) {
+                    println!("VaultFS: Healing orphaned file: {} (ino {})", file.name, ino);
+                    if let Some(shadow_path) = file.shadow_path {
+                        let _ = std_fs::remove_file(shadow_path);
+                    }
+                    if let Some(blob_id) = file.cloud_blob_id {
+                        let _ = tx.send(SyncCommand::PurgeCloud { blob_id });
+                    }
+                }
+            }
+            if let Ok(data) = serde_json::to_string(&initial_files) {
+                let _ = std_fs::write(&local_index_path, data);
+            }
+            PENDING_SYNCS.fetch_add(1, Ordering::SeqCst);
+            let _ = tx.send(SyncCommand::SyncIndex);
+        }
+
         let max_ino = initial_files.keys().max().cloned().unwrap_or(1);
 
         // Update the shared files map directly
@@ -421,9 +482,6 @@ impl VaultFS {
             let mut lock = shared_files.lock().unwrap();
             *lock = initial_files;
         }
-
-        let pq_inner = Arc::new((Mutex::new(PriorityQueue::new()), Condvar::new()));
-        let tx = PrioritySender { inner: pq_inner.clone() };
 
         let worker_files = shared_files.clone();
         let worker_key = key_state.clone();
@@ -437,9 +495,12 @@ impl VaultFS {
             worker_files,
             worker_key,
             worker_blob_id,
-            worker_config_path,
+            worker_config_path.clone(),
             worker_local_index_path,
         );
+
+        // Start background cloud reconciliation to purge any leftover/garbage blobs!
+        start_cloud_reconciliation(worker_config_path, shared_files.clone());
 
         // Check for missing files and trigger PullAll
         let has_missing = {
@@ -517,6 +578,8 @@ impl VaultFS {
                     if let Some(path) = &file.shadow_path {
                         if !path.exists() {
                             file.shadow_path = None;
+                        } else {
+                            crate::drive_mirror::update_cached_hash(file.ino, path);
                         }
                     }
                 }
@@ -528,12 +591,38 @@ impl VaultFS {
             None
         };
 
-        let initial_files = restored.unwrap_or(files);
-        let max_ino = initial_files.keys().max().cloned().unwrap_or(1);
-        let files_arc = Arc::new(Mutex::new(initial_files));
-
         let pq_inner = Arc::new((Mutex::new(PriorityQueue::new()), Condvar::new()));
         let tx = PrioritySender { inner: pq_inner.clone() };
+
+        let mut initial_files = restored.unwrap_or(files);
+        let mut orphaned_inos = Vec::new();
+        for &ino in initial_files.keys() {
+            if !traces_to_root(ino, &initial_files) {
+                orphaned_inos.push(ino);
+            }
+        }
+        if !orphaned_inos.is_empty() {
+            println!("[TEST] Found {} orphaned index entries, healing...", orphaned_inos.len());
+            for ino in orphaned_inos {
+                if let Some(file) = initial_files.remove(&ino) {
+                    println!("[TEST] Healing orphaned file: {} (ino {})", file.name, ino);
+                    if let Some(shadow_path) = file.shadow_path {
+                        let _ = std_fs::remove_file(shadow_path);
+                    }
+                    if let Some(blob_id) = file.cloud_blob_id {
+                        let _ = tx.send(SyncCommand::PurgeCloud { blob_id });
+                    }
+                }
+            }
+            if let Ok(data) = serde_json::to_string(&initial_files) {
+                let _ = std_fs::write(&local_index_path, data);
+            }
+            PENDING_SYNCS.fetch_add(1, Ordering::SeqCst);
+            let _ = tx.send(SyncCommand::SyncIndex);
+        }
+
+        let max_ino = initial_files.keys().max().cloned().unwrap_or(1);
+        let files_arc = Arc::new(Mutex::new(initial_files));
 
         let worker_files = files_arc.clone();
         let worker_key = key_state.clone();
@@ -547,9 +636,12 @@ impl VaultFS {
             worker_files,
             worker_key,
             worker_blob_id,
-            worker_config_path,
+            worker_config_path.clone(),
             worker_local_index_path,
         );
+
+        // Start background cloud reconciliation to purge any leftover/garbage blobs!
+        start_cloud_reconciliation(worker_config_path, files_arc.clone());
 
         // Check for missing files and trigger PullAll
         let has_missing = {
@@ -1235,6 +1327,13 @@ impl Filesystem for VaultFS {
                 reply.error(libc::EPERM);
                 return;
             }
+            // Check if directory is empty (no other files have parent_ino == i)
+            let is_empty = !files.values().any(|f| f.parent_ino == i);
+            if !is_empty {
+                drop(files);
+                reply.error(libc::ENOTEMPTY);
+                return;
+            }
             files.remove(&i);
             drop(files);
             self.save_local_index();
@@ -1413,4 +1512,171 @@ impl Filesystem for VaultFS {
 
 pub fn internal_purge_blobs(config_path: &PathBuf, blob_ids: Vec<String>) -> Result<(), String> {
     crate::drive_mirror::purge_blobs_direct(config_path, blob_ids)
+}
+
+fn traces_to_root(ino: u64, files: &HashMap<u64, VaultFile>) -> bool {
+    if ino == 1 {
+        return true;
+    }
+    let mut current = ino;
+    let mut visited = std::collections::HashSet::new();
+    while current != 1 {
+        if !visited.insert(current) {
+            return false;
+        }
+        if let Some(parent) = files.get(&current).map(|f| f.parent_ino) {
+            if parent == current {
+                return false;
+            }
+            current = parent;
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_ignored_path(ino: u64, files: &HashMap<u64, VaultFile>) -> bool {
+    if ino == 1 {
+        return false;
+    }
+    let mut current = ino;
+    let mut visited = std::collections::HashSet::new();
+    while current != 1 {
+        if !visited.insert(current) {
+            break;
+        }
+        if let Some(file) = files.get(&current) {
+            let name = file.name.to_lowercase();
+            if name.starts_with(".trash")
+                || name == ".ds_store"
+                || name == "thumbs.db"
+                || name == "desktop.ini"
+            {
+                return true;
+            }
+            current = file.parent_ino;
+        } else {
+            break;
+        }
+    }
+    false
+}
+
+pub fn start_cloud_reconciliation(
+    config_path: PathBuf,
+    files_arc: Arc<Mutex<HashMap<u64, VaultFile>>>,
+) {
+    std::thread::spawn(move || {
+        println!("VaultFS: Starting background cloud storage reconciliation...");
+        match perform_cloud_reconciliation(&config_path, &files_arc) {
+            Ok(_) => println!("VaultFS: Cloud storage reconciliation completed successfully."),
+            Err(e) => eprintln!("VaultFS: Cloud reconciliation failed: {}", e),
+        }
+    });
+}
+
+fn perform_cloud_reconciliation(
+    config_path: &PathBuf,
+    files_arc: &Arc<Mutex<HashMap<u64, VaultFile>>>,
+) -> Result<(), String> {
+    let config_content = std_fs::read_to_string(config_path).map_err(|e| e.to_string())?;
+    let config: crate::OnboardingConfig = serde_json::from_str(&config_content).map_err(|e| e.to_string())?;
+
+    let mut token = match config.google_access_token.clone() {
+        Some(t) => t,
+        None => return Err("Google access token missing".to_string()),
+    };
+
+    let client = reqwest::blocking::Client::new();
+
+    let query_gdrive = |client: &reqwest::blocking::Client, token: &str, q: &str, fields: &str| -> Result<serde_json::Value, String> {
+        let res = client.get("https://www.googleapis.com/drive/v3/files")
+            .bearer_auth(token)
+            .query(&[("q", q), ("fields", fields)])
+            .send()
+            .map_err(|e| e.to_string())?;
+        
+        if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err("UNAUTHORIZED".to_string());
+        }
+
+        if !res.status().is_success() {
+            return Err(format!("GDrive query failed: status {}", res.status()));
+        }
+
+        res.json::<serde_json::Value>().map_err(|e| e.to_string())
+    };
+
+    let mut folder_res = query_gdrive(&client, &token, "name='SecureVault' and mimeType='application/vnd.google-apps.folder' and trashed=false", "files(id)");
+    
+    if let Err(ref e) = folder_res {
+        if e == "UNAUTHORIZED" {
+            println!("VaultFS Reconciler: Access token expired, refreshing...");
+            if let Ok(new_token) = crate::oauth::refresh_google_token_blocking(config_path) {
+                token = new_token;
+                folder_res = query_gdrive(&client, &token, "name='SecureVault' and mimeType='application/vnd.google-apps.folder' and trashed=false", "files(id)");
+            }
+        }
+    }
+
+    let folder_json = folder_res?;
+    let files_arr = folder_json["files"].as_array().ok_or("Invalid response from GDrive folder search")?;
+    if files_arr.is_empty() {
+        println!("VaultFS Reconciler: SecureVault folder not found on Google Drive.");
+        return Ok(());
+    }
+
+    let folder_id = files_arr[0]["id"].as_str().ok_or("Folder ID missing")?;
+
+    let q_files = format!("'{}' in parents and trashed=false", folder_id);
+    let files_json = query_gdrive(&client, &token, &q_files, "files(id,name)")?;
+    let gdrive_files = files_json["files"].as_array().ok_or("Invalid response from GDrive file listing")?;
+
+    let mut active_blobs = std::collections::HashSet::new();
+    
+    let (_, pk) = crate::get_or_create_signing_key_at(config_path.clone());
+    let url = format!("{}/api/vault/index?public_key={}", crate::config::get_backend_url(), pk);
+    if let Ok(res) = client.get(&url).send() {
+        if res.status().is_success() {
+            if let Ok(val) = res.json::<serde_json::Value>() {
+                if let Some(blob_id) = val["blob_id"].as_str() {
+                    if !blob_id.is_empty() {
+                        active_blobs.insert(blob_id.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    {
+        let files = files_arc.lock().unwrap();
+        for file in files.values() {
+            if let Some(blob_id) = &file.cloud_blob_id {
+                active_blobs.insert(blob_id.clone());
+            }
+        }
+    }
+
+    println!("VaultFS Reconciler: Found {} active blobs in vault index.", active_blobs.len());
+
+    let mut garbage_blobs = Vec::new();
+    for f in gdrive_files {
+        if let Some(name) = f["name"].as_str() {
+            if name.len() == 36 && !active_blobs.contains(name) {
+                garbage_blobs.push(name.to_string());
+            }
+        }
+    }
+
+    if garbage_blobs.is_empty() {
+        println!("VaultFS Reconciler: No garbage blobs found on Google Drive.");
+        return Ok(());
+    }
+
+    println!("VaultFS Reconciler: Found {} garbage blobs to purge: {:?}", garbage_blobs.len(), garbage_blobs);
+
+    crate::drive_mirror::purge_blobs_direct(config_path, garbage_blobs)?;
+
+    Ok(())
 }

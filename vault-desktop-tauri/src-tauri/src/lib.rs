@@ -1,10 +1,10 @@
-mod crypto;
-mod config;
+pub mod crypto;
+pub mod config;
 pub mod fs;
 mod network;
 mod oauth;
 mod shield;
-mod drive_mirror;
+pub mod drive_mirror;
 
 use base64::{engine::general_purpose, Engine as _};
 use ed25519_dalek::SigningKey;

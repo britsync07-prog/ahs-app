@@ -12,6 +12,10 @@ default-run = "vault-desktop-tauri"
 name = "deep_test"
 path = "src/bin/deep_test.rs"
 
+[[bin]]
+name = "interactive_test"
+path = "src/bin/interactive_test.rs"
+
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
