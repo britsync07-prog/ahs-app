@@ -63,16 +63,16 @@ pub static PENDING_SYNCS: std::sync::atomic::AtomicUsize = std::sync::atomic::At
 
 use serde::{Deserialize, Serialize};
 
-struct ActiveBlock {
-    index: usize,
-    data: Vec<u8>,
-    dirty: bool,
+pub struct ActiveBlock {
+    pub index: usize,
+    pub data: Vec<u8>,
+    pub dirty: bool,
 }
 
-struct OpenFile {
-    file: std_fs::File,
-    active_block: Option<ActiveBlock>,
-    dirty: bool,
+pub struct OpenFile {
+    pub file: std_fs::File,
+    pub active_block: Option<ActiveBlock>,
+    pub dirty: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -138,19 +138,19 @@ impl Clone for PrioritySender {
 }
 
 pub struct VaultFS {
-    app_handle: Option<AppHandle>,
-    files: Arc<Mutex<HashMap<u64, VaultFile>>>,
-    next_ino: Mutex<u64>,
-    sync_tx: PrioritySender,
-    key_state: SharedKey,
-    local_index_path: PathBuf,
-    shadow_dir: PathBuf,
-    open_files: Arc<Mutex<HashMap<u64, Arc<Mutex<OpenFile>>>>>,
-    next_fh: std::sync::atomic::AtomicU64,
+    pub app_handle: Option<AppHandle>,
+    pub files: Arc<Mutex<HashMap<u64, VaultFile>>>,
+    pub next_ino: Mutex<u64>,
+    pub sync_tx: PrioritySender,
+    pub key_state: SharedKey,
+    pub local_index_path: PathBuf,
+    pub shadow_dir: PathBuf,
+    pub open_files: Arc<Mutex<HashMap<u64, Arc<Mutex<OpenFile>>>>>,
+    pub next_fh: std::sync::atomic::AtomicU64,
     #[cfg(not(windows))]
-    uid: u32,
+    pub uid: u32,
     #[cfg(not(windows))]
-    gid: u32,
+    pub gid: u32,
 }
 
 fn spawn_sync_worker(
@@ -681,6 +681,231 @@ impl VaultFS {
 
     pub fn get_files_handle(&self) -> Arc<Mutex<HashMap<u64, VaultFile>>> {
         self.files.clone()
+    }
+
+    pub fn create_file_internal(&self, parent: u64, name: &str) -> Result<(u64, u64), String> {
+        let mut files = self.files.lock().unwrap();
+
+        if files
+            .values()
+            .any(|f| f.parent_ino == parent && f.name == name)
+        {
+            return Err("File already exists".to_string());
+        }
+
+        let mut next_ino = self.next_ino.lock().unwrap();
+        let ino = *next_ino;
+        *next_ino += 1;
+
+        let shadow_path = self.shadow_dir.join(format!("{}.blob", ino));
+
+        let new_file = VaultFile {
+            ino,
+            parent_ino: parent,
+            name: name.to_string(),
+            kind: VaultFileType::RegularFile,
+            size: 0,
+            modified_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            shadow_path: Some(shadow_path.clone()),
+            cloud_blob_id: None,
+        };
+        let file = std_fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&shadow_path)
+            .map_err(|e| e.to_string())?;
+
+        let fh = self.next_fh.fetch_add(1, Ordering::SeqCst);
+        let open_file = OpenFile {
+            file,
+            active_block: None,
+            dirty: true,
+        };
+
+        self.open_files
+            .lock()
+            .unwrap()
+            .insert(fh, Arc::new(Mutex::new(open_file)));
+
+        files.insert(ino, new_file.clone());
+        drop(files);
+        self.save_local_index();
+        self.notify_ui();
+        Ok((ino, fh))
+    }
+
+    pub fn write_file_internal(&self, ino: u64, fh: u64, offset: u64, data: &[u8]) -> Result<usize, String> {
+        let open_file_arc = {
+            let lock = self.open_files.lock().unwrap();
+            lock.get(&fh).cloned().ok_or("File handle not found")?
+        };
+
+        let mut open_file = open_file_arc.lock().unwrap();
+        let offset = offset as usize;
+        let write_size = data.len();
+        
+        let start_block = offset / crate::crypto::BLOCK_SIZE;
+        let end_block = (offset + write_size - 1) / crate::crypto::BLOCK_SIZE;
+
+        let mut data_written = 0;
+
+        for block_idx in start_block..=end_block {
+            let in_cache = open_file.active_block.as_ref().map_or(false, |b| b.index == block_idx);
+            if !in_cache {
+                Self::flush_active_block(&mut open_file, self.key_state.clone())?;
+
+                let block_offset = block_idx * crate::crypto::ENCRYPTED_BLOCK_SIZE;
+                let mut encrypted_block = vec![0u8; crate::crypto::ENCRYPTED_BLOCK_SIZE];
+                let bytes_read = open_file.file.read_at_cross(&mut encrypted_block, block_offset as u64).unwrap_or(0);
+                
+                let block_data = if bytes_read > 0 {
+                    encrypted_block.truncate(bytes_read);
+                    crate::crypto::decrypt_local_data(&encrypted_block, self.key_state.clone()).unwrap_or_else(|_| vec![0u8; crate::crypto::BLOCK_SIZE])
+                } else {
+                    Vec::with_capacity(crate::crypto::BLOCK_SIZE)
+                };
+
+                open_file.active_block = Some(ActiveBlock {
+                    index: block_idx,
+                    data: block_data,
+                    dirty: false,
+                });
+            }
+
+            if let Some(block) = &mut open_file.active_block {
+                let data_start_in_block = if block_idx == start_block {
+                    offset % crate::crypto::BLOCK_SIZE
+                } else {
+                    0
+                };
+                
+                let remaining_to_write = write_size - data_written;
+                let bytes_to_write_in_this_block = remaining_to_write.min(crate::crypto::BLOCK_SIZE - data_start_in_block);
+                
+                let required_len = data_start_in_block + bytes_to_write_in_this_block;
+                if block.data.len() < required_len {
+                    block.data.resize(required_len, 0);
+                }
+                
+                block.data[data_start_in_block..required_len].copy_from_slice(&data[data_written..data_written + bytes_to_write_in_this_block]);
+                block.dirty = true;
+                data_written += bytes_to_write_in_this_block;
+            }
+        }
+        open_file.dirty = true;
+
+        let mut files = self.files.lock().unwrap();
+        if let Some(f) = files.get_mut(&ino) {
+            let new_size = (offset + write_size) as u64;
+            if new_size > f.size {
+                f.size = new_size;
+            }
+            f.modified_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        }
+
+        Ok(data.len())
+    }
+
+    pub fn read_file_internal(&self, ino: u64, fh: u64, offset: u64, buf: &mut [u8]) -> Result<usize, String> {
+        let open_file_arc = {
+            let lock = self.open_files.lock().unwrap();
+            lock.get(&fh).cloned().ok_or("File handle not found")?
+        };
+
+        let mut open_file = open_file_arc.lock().unwrap();
+        let file_size = {
+            let files = self.files.lock().unwrap();
+            files.get(&ino).map(|f| f.size).unwrap_or(0) as usize
+        };
+
+        let offset = offset as usize;
+        let size = buf.len();
+        if offset >= file_size {
+            return Ok(0);
+        }
+
+        let mut read_size = size as usize;
+        if offset + read_size > file_size {
+            read_size = file_size - offset;
+        }
+
+        let start_block = offset / crate::crypto::BLOCK_SIZE;
+        let end_block = (offset + read_size - 1) / crate::crypto::BLOCK_SIZE;
+
+        let mut data_read = 0;
+        for block_idx in start_block..=end_block {
+            let in_cache = open_file.active_block.as_ref().map_or(false, |b| b.index == block_idx);
+            if !in_cache {
+                Self::flush_active_block(&mut open_file, self.key_state.clone())?;
+                
+                let block_offset = block_idx * crate::crypto::ENCRYPTED_BLOCK_SIZE;
+                let mut encrypted_block = vec![0u8; crate::crypto::ENCRYPTED_BLOCK_SIZE];
+                let bytes_read = open_file.file.read_at_cross(&mut encrypted_block, block_offset as u64).unwrap_or(0);
+                
+                if bytes_read > 0 {
+                    encrypted_block.truncate(bytes_read);
+                    if let Ok(decrypted) = crate::crypto::decrypt_local_data(&encrypted_block, self.key_state.clone()) {
+                        open_file.active_block = Some(ActiveBlock {
+                            index: block_idx,
+                            data: decrypted,
+                            dirty: false,
+                        });
+                    } else {
+                        return Err("Decryption failed".to_string());
+                    }
+                } else {
+                    open_file.active_block = Some(ActiveBlock {
+                        index: block_idx,
+                        data: Vec::new(),
+                        dirty: false,
+                    });
+                }
+            }
+
+            if let Some(block) = &open_file.active_block {
+                let data_start_in_block = if block_idx == start_block {
+                    offset % crate::crypto::BLOCK_SIZE
+                } else {
+                    0
+                };
+                
+                let remaining_to_read = read_size - data_read;
+                let available_in_block = block.data.len().saturating_sub(data_start_in_block);
+                let bytes_to_take = remaining_to_read.min(available_in_block);
+                
+                if bytes_to_take > 0 {
+                    buf[data_read..data_read + bytes_to_take].copy_from_slice(&block.data[data_start_in_block..data_start_in_block + bytes_to_take]);
+                    data_read += bytes_to_take;
+                }
+            }
+        }
+
+        Ok(data_read)
+    }
+
+    pub fn release_file_internal(&self, ino: u64, fh: u64) -> Result<(), String> {
+        let open_file_opt = self.open_files.lock().unwrap().remove(&fh);
+        let mut is_dirty = false;
+        if let Some(open_file_arc) = open_file_opt {
+            let mut open_file = open_file_arc.lock().unwrap();
+            Self::flush_active_block(&mut open_file, self.key_state.clone())?;
+            is_dirty = open_file.dirty;
+        }
+
+        if is_dirty {
+            PENDING_SYNCS.fetch_add(1, Ordering::SeqCst);
+            let _ = self.sync_tx.send(SyncCommand::SyncIndex);
+            
+            PENDING_SYNCS.fetch_add(1, Ordering::SeqCst);
+            if self.sync_tx.send(SyncCommand::SyncFile { ino }).is_err() {
+                PENDING_SYNCS.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+
+        self.notify_ui();
+        Ok(())
     }
 
     fn notify_ui(&self) {
@@ -1681,4 +1906,58 @@ fn perform_cloud_reconciliation(
     crate::drive_mirror::purge_blobs_direct(config_path, garbage_blobs)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use std::sync::{Arc, RwLock};
+
+    #[test]
+    fn test_vault_deep_integrity_unit() {
+        let tmp_dir = tempdir().expect("Failed to create temp dir");
+        let config_path = tmp_dir.path().join("onboarding.json");
+        
+        let key_data = [0u8; 32];
+        let key_state: SharedKey = Arc::new(RwLock::new(Some((key_data, None))));
+        let blob_id_state: SharedBlobId = Arc::new(RwLock::new(None));
+        
+        let (vfs, _sync_tx) = VaultFS::new_test(config_path, key_state.clone(), blob_id_state);
+        
+        // 1. Create File
+        let (ino, fh) = vfs.create_file_internal(1, "test.txt").expect("Create failed");
+        
+        // 2. Write Data
+        let test_data = b"DEEP_TEST_SECRET_DATA_12345";
+        vfs.write_file_internal(ino, fh, 0, test_data).expect("Write failed");
+        
+        // 3. Flush
+        vfs.release_file_internal(ino, fh).expect("Release failed");
+        
+        // 4. Verify Shadow File Exists (Encrypted)
+        let shadow_path = tmp_dir.path().join(".vault_shadow").join(format!("{}.blob", ino));
+        assert!(shadow_path.exists(), "Shadow blob missing");
+        
+        let encrypted_content = std_fs::read(&shadow_path).expect("Read shadow failed");
+        assert_ne!(encrypted_content, test_data, "Data is not encrypted!");
+        
+        // 5. Read Back and Decrypt
+        let mut read_buf = vec![0u8; test_data.len()];
+        // Re-open handle for reading
+        let fh_read = vfs.next_fh.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let file = std_fs::File::open(&shadow_path).expect("Open shadow failed");
+        vfs.open_files.lock().unwrap().insert(fh_read, Arc::new(Mutex::new(OpenFile {
+            file,
+            active_block: None,
+            dirty: false,
+        })));
+
+        let bytes_read = vfs.read_file_internal(ino, fh_read, 0, &mut read_buf).expect("Read failed");
+        
+        assert_eq!(bytes_read, test_data.len());
+        assert_eq!(&read_buf, test_data, "Integrity check failed: decrypted data differs!");
+        
+        println!("UNIT TEST: Encryption integrity verified!");
+    }
 }

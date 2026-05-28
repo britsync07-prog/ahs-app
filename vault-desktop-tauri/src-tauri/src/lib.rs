@@ -51,6 +51,18 @@ fn get_desktop_public_key(app: AppHandle) -> Result<String, String> {
     Ok(pk)
 }
 
+#[derive(serde::Serialize)]
+pub struct DesktopIdentityInfo {
+    pub public_key: String,
+}
+
+#[tauri::command]
+fn get_desktop_identity_info(app: AppHandle) -> Result<DesktopIdentityInfo, String> {
+    let path = get_config_path(&app);
+    let (_, pk) = get_or_create_signing_key_at(path);
+    Ok(DesktopIdentityInfo { public_key: pk })
+}
+
 #[tauri::command]
 async fn request_unlock_push(app: AppHandle) -> Result<(), String> {
     let path = get_config_path(&app);
@@ -498,6 +510,15 @@ async fn lock_vault_internal(
         }
     }
 
+    #[cfg(windows)]
+    {
+        // Unmount subst drive
+        let _ = Command::new("subst")
+            .arg("M:")
+            .arg("/D")
+            .status();
+    }
+
     // Explicit lazy unmount to ensure UI doesn't hang if OS is slow to detach
     #[cfg(not(target_os = "windows"))]
     {
@@ -579,7 +600,30 @@ async fn mount_vault_internal(
 
         #[cfg(target_os = "windows")]
         {
-            let (_, pk) = get_or_create_signing_key_at(config_path);
+            let config_path_clone = config_path.clone();
+            let app_handle_webdav = app_clone.clone();
+            let key_state_webdav = key_state_clone.clone();
+            
+            // Start WebDAV server in a background thread
+            std::thread::spawn(move || {
+                run_webdav_server(app_handle_webdav, key_state_webdav);
+            });
+
+            // Attempt to mount drive letter M:
+            let _ = Command::new("subst")
+                .arg("M:")
+                .arg("/D") // Unmount first
+                .status();
+            
+            // Note: For real virtual drive behavior, we'd use net use with the WebDAV port.
+            // For now, we'll use subst to the mount_point as a fallback.
+            let mount_point = vault_mount_path().unwrap_or(PathBuf::from("C:\\Vault"));
+            let _ = Command::new("subst")
+                .arg("M:")
+                .arg(&mount_point)
+                .status();
+
+            let (_, pk) = get_or_create_signing_key_at(config_path_clone);
             start_inactivity_watcher(app_clone.clone(), pk);
             shield::start_intelligent_shield(app_clone);
             return Ok(());
@@ -854,7 +898,7 @@ pub struct IdentityResponse {
     pub desktop_x_public_key: String,
     pub pairing_nonce: String,
     pub backend_url: String,
-    pub mnemonic: String,
+    pub mnemonic: Option<String>,
 }
 
 #[tauri::command]
@@ -913,7 +957,7 @@ fn generate_desktop_identity(app: AppHandle, key_state: tauri::State<'_, SharedK
         desktop_x_public_key: x_pk_b64,
         pairing_nonce: nonce,
         backend_url,
-        mnemonic: phrase.clone(),
+        mnemonic: Some(phrase.clone()),
     })
 }
 
@@ -961,6 +1005,127 @@ fn save_google_tokens(app: AppHandle, access_token: String, refresh_token: Optio
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
+    let server = tiny_http::Server::http("127.0.0.1:8081").unwrap();
+    println!("WebDAV: Server started on 127.0.0.1:8081");
+
+    for request in server.incoming_requests() {
+        let method = request.method().to_string();
+        let url = request.url().to_string();
+        println!("WebDAV Request: {} {}", method, url);
+
+        // Bridge to VaultFS logic
+        // This is a simplified implementation
+        match method.as_str() {
+            "OPTIONS" => {
+                let response = tiny_http::Response::empty(200)
+                    .with_header(tiny_http::Header::from_bytes(&b"Allow"[..], &b"GET, POST, OPTIONS, PROPFIND, PUT, DELETE, MKCOL, MOVE"[..]).unwrap())
+                    .with_header(tiny_http::Header::from_bytes(&b"DAV"[..], &b"1, 2"[..]).unwrap());
+                let _ = request.respond(response);
+            }
+            "PROPFIND" => {
+                // Return directory listing in XML
+                let files_state = app.state::<SharedFileList>();
+                let files = files_state.lock().unwrap();
+                
+                let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n<D:multistatus xmlns:D=\"DAV:\">\n");
+                
+                // Add entries for each file/folder
+                for f in files.values() {
+                    let is_dir = matches!(f.kind, fs::VaultFileType::Directory);
+                    xml.push_str("<D:response>\n");
+                    xml.push_str(&format!("<D:href>/{}</D:href>\n", f.name));
+                    xml.push_str("<D:propstat>\n<D:prop>\n");
+                    xml.push_str(&format!("<D:displayname>{}</D:displayname>\n", f.name));
+                    if is_dir {
+                        xml.push_str("<D:resourcetype><D:collection/></D:resourcetype>\n");
+                    } else {
+                        xml.push_str("<D:resourcetype/>\n");
+                        xml.push_str(&format!("<D:getcontentlength>{}</D:get_content_length>\n", f.size));
+                    }
+                    xml.push_str("</D:prop>\n<D:status>HTTP/1.1 200 OK</D:status>\n</D:propstat>\n</D:response>\n");
+                }
+                xml.push_str("</D:multistatus>");
+
+                let response = tiny_http::Response::from_string(xml)
+                    .with_status_code(207)
+                    .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/xml; charset=utf-8"[..]).unwrap());
+                let _ = request.respond(response);
+            }
+            "GET" => {
+                let path = url.trim_start_matches('/');
+                let files_state = app.state::<SharedFileList>();
+                let files = files_state.lock().unwrap();
+                
+                let found = files.values().find(|f| f.name == path);
+                if let Some(f) = found {
+                    if let Some(shadow_path) = &f.shadow_path {
+                        // Decrypt and serve
+                        if let Ok(encrypted_data) = std_fs::read(shadow_path) {
+                            if let Ok(decrypted) = crypto::decrypt_local_data(&encrypted_data, key_state.clone()) {
+                                let response = tiny_http::Response::from_data(decrypted);
+                                let _ = request.respond(response);
+                                continue;
+                            }
+                        }
+                    }
+                }
+                let _ = request.respond(tiny_http::Response::empty(404));
+            }
+            _ => {
+                let response = tiny_http::Response::empty(405);
+                let _ = request.respond(response);
+            }
+        }
+    }
+}
+
+#[tauri::command]
+async fn generate_secondary_pairing_payload(
+    app: AppHandle,
+    key_state: tauri::State<'_, SharedKey>,
+) -> Result<IdentityResponse, String> {
+    let storage = key_state.read().map_err(|e| e.to_string())?;
+    
+    // We only allow secondary pairing if the vault is currently unlocked
+    if storage.is_none() {
+        return Err("Vault must be unlocked to pair a new device".to_string());
+    }
+
+    let (_, pk_b64) = get_or_create_signing_key(&app);
+    let (x_priv, x_pub_b64) = get_or_create_x_secret(&app);
+
+    let mut rng = rand::thread_rng();
+    let mut nonce_bytes = [0u8; 32];
+    rng.fill_bytes(&mut nonce_bytes);
+    let nonce = base64::engine::general_purpose::STANDARD.encode(nonce_bytes);
+
+    // Register this new pairing session with the backend so it expects the handshake
+    let backend_url = crate::config::get_backend_url();
+    
+    if let Ok(mut handle_lock) = WS_JOIN_HANDLE.lock() {
+        if let Some(h) = handle_lock.take() {
+            h.abort();
+        }
+        let (app_c, pk_c, n_c) = (app.clone(), pk_b64.clone(), nonce.clone());
+        let x_secret_c = x_priv.clone();
+        *handle_lock = Some(tauri::async_runtime::spawn(async move {
+            network::connect_and_register(app_c, pk_c, n_c, true, x_secret_c).await;
+        }));
+    }
+
+    // Notice we do NOT include the mnemonic or AES key here.
+    // Secondary devices must wait for the "Magic Push" from the Desktop.
+    Ok(IdentityResponse {
+        desktop_public_key: pk_b64,
+        desktop_x_public_key: x_pub_b64,
+        pairing_nonce: nonce,
+        backend_url,
+        mnemonic: None, 
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -976,6 +1141,8 @@ pub fn run() {
         .manage(SharedFileList::default())
         .invoke_handler(tauri::generate_handler![
             generate_desktop_identity,
+            generate_secondary_pairing_payload,
+            get_desktop_identity_info,
             open_vault_folder,
             mount_vault,
             lock_vault,

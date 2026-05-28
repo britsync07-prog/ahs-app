@@ -23,12 +23,15 @@ func main() {
 	// 1. Initialize DB
 	database, err := db.NewConnection()
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		log.Fatalf("FATAL: Failed to connect to database. Production mode requires PostgreSQL: %v", err)
+	}
+	if database == nil {
+		log.Fatalf("FATAL: Database connection returned nil. Production mode requires PostgreSQL.")
 	}
 	defer database.Close()
-
+	
 	if err := database.InitSchema(context.Background()); err != nil {
-		log.Fatalf("Failed to initialize database schema: %v", err)
+		log.Printf("Warning: Failed to initialize database schema: %v", err)
 	}
 
 	// 2. Initialize GDrive Storage

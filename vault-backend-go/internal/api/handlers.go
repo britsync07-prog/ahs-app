@@ -75,12 +75,25 @@ func NewHandler(s *storage.GDriveStorage, h *ws.Hub, d *db.Database) *Handler {
 }
 
 func (h *Handler) GetDevices(w http.ResponseWriter, r *http.Request) {
+	pk := r.URL.Query().Get("public_key")
+	if pk == "" {
+		http.Error(w, "public_key required", http.StatusBadRequest)
+		return
+	}
 	devices, err := h.db.GetDevices(r.Context())
 	if err != nil {
 		http.Error(w, "Failed to fetch devices", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(devices)
+
+	userDevices := []map[string]interface{}{}
+	for _, d := range devices {
+		if d["public_key"] == pk {
+			userDevices = append(userDevices, d)
+		}
+	}
+
+	json.NewEncoder(w).Encode(userDevices)
 }
 
 func (h *Handler) GetActivity(w http.ResponseWriter, r *http.Request) {
@@ -732,6 +745,14 @@ func (h *Handler) DownloadVault(w http.ResponseWriter, r *http.Request) {
 	// Verify signature of the blobID
 	if err := h.verifyDesktopSignature(desktopPK, []byte(blobID), signature); err != nil {
 		http.Error(w, "Invalid desktop signature for download", http.StatusUnauthorized)
+		return
+	}
+
+	// Verify ownership in DB to prevent cross-user access
+	owner, err := h.db.GetBlobOwner(r.Context(), blobID)
+	if err != nil || owner != desktopPK {
+		log.Printf("Security Alert: User %s attempted to download blob %s owned by %s", keyFingerprint(desktopPK), blobID, keyFingerprint(owner))
+		http.Error(w, "Forbidden: You do not own this blob", http.StatusForbidden)
 		return
 	}
 

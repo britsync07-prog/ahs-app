@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Smartphone, Monitor, Shield, Trash2, Clock, CheckCircle2 } from "lucide-react";
+import { Smartphone, Monitor, Shield, Trash2, Clock, CheckCircle2, QrCode, X } from "lucide-react";
 import { getBackendUrl } from "../config";
+import { invoke } from "@tauri-apps/api/core";
+import { QRCodeSVG } from 'qrcode.react';
 
 interface Device {
   name: string;
@@ -13,10 +15,15 @@ interface Device {
 export const DeviceManagement: React.FC = () => {
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showPairingQR, setShowPairingQR] = useState(false);
+  const [pairingPayload, setPairingPayload] = useState<any>(null);
 
   const fetchDevices = async () => {
     try {
-      const response = await fetch(`${getBackendUrl()}/api/vault/devices`);
+      // Need the desktop's public key to fetch its authorized devices
+      const info: any = await invoke("get_desktop_identity_info");
+      
+      const response = await fetch(`${getBackendUrl()}/api/vault/devices?public_key=${encodeURIComponent(info.public_key)}`);
       if (response.ok) {
         const data = await response.json();
         setDevices(data);
@@ -51,6 +58,18 @@ export const DeviceManagement: React.FC = () => {
     }
   };
 
+  const generatePairingQR = async () => {
+    try {
+      // We generate a fresh pairing nonce, but use the existing keys
+      const payload: any = await invoke("generate_secondary_pairing_payload");
+      setPairingPayload(payload);
+      setShowPairingQR(true);
+    } catch (e) {
+      console.error("Failed to generate pairing payload:", e);
+      alert("Failed to generate pairing code.");
+    }
+  };
+
   return (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-2 duration-700">
       <div className="flex items-center justify-between mb-8">
@@ -58,6 +77,13 @@ export const DeviceManagement: React.FC = () => {
           <h2 className="text-2xl font-bold text-text-primary">Authorized Devices</h2>
           <p className="text-sm text-text-secondary">Manage hardware keys and workstations linked to your AHS</p>
         </div>
+        <button 
+          onClick={generatePairingQR}
+          className="px-4 py-2 bg-cyan/10 border border-cyan/30 text-cyan rounded-xl font-bold uppercase tracking-widest text-xs flex items-center gap-2 hover:bg-cyan hover:text-black transition-all"
+        >
+          <QrCode size={16} />
+          Pair New Device
+        </button>
       </div>
 
       <div className="grid grid-cols-1 gap-4 overflow-y-auto pr-2 pb-20">
@@ -131,6 +157,35 @@ export const DeviceManagement: React.FC = () => {
            </div>
         )}
       </div>
+
+      {showPairingQR && pairingPayload && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="glass border border-border-subtle p-8 rounded-[40px] max-w-sm w-full relative">
+            <button 
+              onClick={() => setShowPairingQR(false)}
+              className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/10 transition-colors"
+            >
+              <X size={24} className="text-text-secondary" />
+            </button>
+            
+            <div className="text-center space-y-6">
+              <h3 className="text-2xl font-black uppercase tracking-tight text-text-primary">Pair Secondary Device</h3>
+              <p className="text-sm text-text-secondary">Scan this code using the AHS Mobile App or a secondary Web Auth node.</p>
+              
+              <div className="p-4 bg-white rounded-3xl mx-auto inline-block shadow-[0_0_30px_rgba(0,243,255,0.2)]">
+                <QRCodeSVG 
+                  value={JSON.stringify(pairingPayload)}
+                  size={240}
+                  level="H"
+                  includeMargin={true}
+                />
+              </div>
+
+              <p className="text-[10px] text-text-tertiary uppercase tracking-widest font-bold">Waiting for device handshake...</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

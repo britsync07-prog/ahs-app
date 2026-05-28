@@ -30,3 +30,7 @@ google-services.json
 # Environment variables
 .env
 .env.local
+
+# JDK
+jdk17/
+jdk17.zip
