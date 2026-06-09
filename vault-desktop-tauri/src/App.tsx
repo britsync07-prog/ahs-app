@@ -95,19 +95,18 @@ function App() {
     }
   };
 
-  const handleFinishOnboarding = async () => {
+  const handleFinishOnboarding = () => {
     if (!mobileKeys) return;
-    try {
-      await invoke("complete_onboarding", { 
-        mobilePublicKey: mobileKeys.public_key,
-        mobileXPublicKey: mobileKeys.x_public_key
-      });
-      await invoke("share_master_key_with_phone");
-      setIsOnboarded(true);
-      setStatusMessage("AHS identity established.");
-    } catch (e) {
-      console.error("Failed to complete onboarding:", e);
-    }
+    setIsOnboarded(true);
+    setStatusMessage("AHS identity established.");
+    
+    // Run in background so it doesn't freeze the UI
+    invoke("complete_onboarding", { 
+      mobilePublicKey: mobileKeys.public_key,
+      mobileXPublicKey: mobileKeys.x_public_key
+    }).catch(e => console.error(e));
+    
+    invoke("share_master_key_with_phone").catch(e => console.error(e));
   };
 
   const handleRequestUnlock = async () => {
