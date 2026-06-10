@@ -480,13 +480,15 @@ impl VaultFS {
             println!("VaultFS: Found {} orphaned index entries, healing...", orphaned_inos.len());
             for ino in orphaned_inos {
                 if let Some(file) = initial_files.remove(&ino) {
-                    println!("VaultFS: Healing orphaned file: {} (ino {})", file.name, ino);
+                    println!("VaultFS: Healing orphaned file: {} (ino {}) - Cloud ID {:?} kept safe", file.name, ino, file.cloud_blob_id);
                     if let Some(shadow_path) = file.shadow_path {
                         let _ = std_fs::remove_file(shadow_path);
                     }
-                    if let Some(blob_id) = file.cloud_blob_id {
-                        let _ = tx.send(SyncCommand::PurgeCloud { blob_id });
-                    }
+                    // DANGER: Never purge cloud blobs during initial mount healing!
+                    // If restoration is partial, we don't want to delete the only backup.
+                    // if let Some(blob_id) = file.cloud_blob_id {
+                    //    let _ = tx.send(SyncCommand::PurgeCloud { blob_id });
+                    // }
                 }
             }
             if let Ok(data) = serde_json::to_string(&initial_files) {
@@ -1851,6 +1853,10 @@ pub fn start_cloud_reconciliation(
     files_arc: Arc<Mutex<HashMap<u64, VaultFile>>>,
 ) {
     std::thread::spawn(move || {
+        // Initial delay to allow restoration/mount to settle
+        println!("VaultFS: Cloud reconciliation will start in 10 minutes...");
+        std::thread::sleep(std::time::Duration::from_secs(600));
+        
         println!("VaultFS: Starting background cloud storage reconciliation...");
         match perform_cloud_reconciliation(&config_path, &files_arc) {
             Ok(_) => println!("VaultFS: Cloud storage reconciliation completed successfully."),
@@ -1863,16 +1869,30 @@ fn perform_cloud_reconciliation(
     config_path: &PathBuf,
     files_arc: &Arc<Mutex<HashMap<u64, VaultFile>>>,
 ) -> Result<(), String> {
+    // 1. Load config
     let config_content = std_fs::read_to_string(config_path).map_err(|e| e.to_string())?;
     let config: crate::OnboardingConfig = serde_json::from_str(&config_content).map_err(|e| e.to_string())?;
 
+    // 2. SAFETY CHECK: Abort reconciliation if restoration is in progress
+    let (local_file_count, missing_local_count) = {
+        let files = files_arc.lock().unwrap();
+        let total = files.len();
+        let missing = files.values().filter(|f| f.cloud_blob_id.is_some() && f.shadow_path.is_none() && f.kind == VaultFileType::RegularFile).count();
+        (total, missing)
+    };
+
+    if missing_local_count > 0 {
+        println!("VaultFS Reconciler: Restoration in progress ({} files pending download). Skipping cloud purge for safety.", missing_local_count);
+        return Ok(());
+    }
+
     let mut token = match config.google_access_token.clone() {
         Some(t) => t,
-        None => return Err("Google access token missing".to_string()),
+        None => return Err("Google access token missing - reconciliation aborted".to_string()),
     };
 
     let client = reqwest::blocking::Client::new();
-
+    
     let query_gdrive = |client: &reqwest::blocking::Client, token: &str, q: &str, fields: &str| -> Result<serde_json::Value, String> {
         let res = client.get("https://www.googleapis.com/drive/v3/files")
             .bearer_auth(token)
@@ -1915,6 +1935,12 @@ fn perform_cloud_reconciliation(
     let q_files = format!("'{}' in parents and trashed=false", folder_id);
     let files_json = query_gdrive(&client, &token, &q_files, "files(id,name)")?;
     let gdrive_files = files_json["files"].as_array().ok_or("Invalid response from GDrive file listing")?;
+
+    // FINAL SAFETY CHECK: If GDrive has many files but our index is nearly empty, ABORT.
+    if local_file_count <= 1 && gdrive_files.len() > 2 {
+        println!("VaultFS Reconciler: DANGER! Local index is empty but Google Drive has {} files. Aborting purge to prevent data loss.", gdrive_files.len());
+        return Ok(());
+    }
 
     let mut active_blobs = std::collections::HashSet::new();
     

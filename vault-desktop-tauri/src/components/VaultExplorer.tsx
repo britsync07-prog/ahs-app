@@ -202,9 +202,10 @@ export const VaultExplorer: React.FC = () => {
 
       <div className="flex-1 bg-matte/40 rounded-2xl border border-border-primary overflow-hidden flex flex-col">
         <div className="grid grid-cols-12 px-6 py-4 border-b border-border-primary text-[10px] font-bold uppercase tracking-[0.1em] text-text-tertiary">
-          <div className="col-span-6">Name</div>
+          <div className="col-span-5">Name</div>
           <div className="col-span-2">Size</div>
           <div className="col-span-2">Modified</div>
+          <div className="col-span-1 text-center">Status</div>
           <div className="col-span-2 text-right">Protection</div>
         </div>
 
@@ -220,13 +221,13 @@ export const VaultExplorer: React.FC = () => {
                 onDoubleClick={() => file.kind === 'Directory' ? navigateTo(file.name) : null}
                 className="grid grid-cols-12 px-6 py-4 items-center border-b border-white/[0.02] hover:bg-white/[0.03] transition-all cursor-default group"
               >
-                <div className="col-span-6 flex items-center gap-4">
+                <div className="col-span-5 flex items-center gap-4">
                   {file.kind === 'Directory' ? (
                     <Folder className="w-5 h-5 text-blue/60" />
                   ) : (
                     <File className="w-5 h-5 text-text-secondary group-hover:text-cyan transition-colors" />
                   )}
-                  <span className="text-sm font-medium text-text-primary">{file.name}</span>
+                  <span className="text-sm font-medium text-text-primary truncate">{file.name}</span>
                 </div>
                 
                 <div className="col-span-2 text-xs font-mono text-text-tertiary">
@@ -234,7 +235,21 @@ export const VaultExplorer: React.FC = () => {
                 </div>
                 
                 <div className="col-span-2 text-xs text-text-tertiary">
-                  {new Date(file.modified_at * 1000).toLocaleDateString()} {new Date(file.modified_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  {new Date(file.modified_at * 1000).toLocaleDateString()}
+                </div>
+
+                <div className="col-span-1 flex justify-center">
+                  {file.kind === 'RegularFile' && (
+                    file.cloud_blob_id ? (
+                      <div className="p-1.5 rounded-full bg-emerald/10 text-emerald" title="Synced to Cloud">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                      </div>
+                    ) : (
+                      <div className="p-1.5 rounded-full bg-amber-500/10 text-amber-500" title="Local Only / Syncing...">
+                        <Clock className="w-3.5 h-3.5 animate-pulse" />
+                      </div>
+                    )
+                  )}
                 </div>
 
                  <div className="col-span-2 flex justify-end items-center gap-3">
