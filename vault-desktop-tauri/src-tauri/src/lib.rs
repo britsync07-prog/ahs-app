@@ -32,14 +32,14 @@ pub type SharedFileList = Arc<Mutex<HashMap<u64, fs::VaultFile>>>;
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 pub struct OnboardingConfig {
-    onboarded: bool,
-    mnemonic: Option<String>,           // NEW: The master recovery phrase
-    mobile_public_key: Option<String>,
-    mobile_x_public_key: Option<String>, // NEW: For ECIES to mobile
-    desktop_signing_key: Option<String>, // Base64 encoded secret bytes
-    desktop_x_secret: Option<String>,    // Base64 encoded x25519 static secret
-    last_blob_id: Option<String>,        // NEW: Root index pointer
-    last_sync: Option<u64>,              // NEW: Persistent sync timestamp
+    pub onboarded: bool,
+    pub mnemonic: Option<String>,
+    pub mobile_public_key: Option<String>,
+    pub mobile_x_public_key: Option<String>,
+    pub desktop_signing_key: Option<String>,
+    pub desktop_x_secret: Option<String>,
+    pub last_blob_id: Option<String>,
+    pub last_sync: Option<u64>,
     pub google_access_token: Option<String>,
     pub google_refresh_token: Option<String>,
 }
@@ -600,6 +600,14 @@ async fn mount_vault_internal(
             }
         }
 
+        // Initialize VaultFS for ALL platforms so the sync worker starts
+        let shared_files = app_clone.state::<SharedFileList>();
+        let (vfs, sync_tx) =
+            fs::VaultFS::new(app_clone.clone(), key_state_clone.clone(), blob_id_state_clone.clone(), shared_files.inner().clone());
+        {
+            *SYNC_TX.lock().unwrap() = Some(sync_tx);
+        }
+
         #[cfg(target_os = "windows")]
         {
             let config_path_clone = config_path.clone();
@@ -646,11 +654,6 @@ async fn mount_vault_internal(
 
         #[cfg(not(target_os = "windows"))]
         {
-            // Now safe to call fs::VaultFS::new even if it makes blocking network calls
-            let shared_files = app_clone.state::<SharedFileList>();
-            let (vfs, sync_tx) =
-                fs::VaultFS::new(app_clone.clone(), key_state_clone, blob_id_state_clone, shared_files.inner().clone());
-
             let options = vec![
                 fuser::MountOption::RW,
                 fuser::MountOption::FSName("VaultFS".to_string()),
@@ -664,9 +667,6 @@ async fn mount_vault_internal(
                     println!("VaultFS: Mounted successfully at {:?}", mount_point);
                     {
                         *FUSE_SESSION.lock().unwrap() = Some(session);
-                    }
-                    {
-                        *SYNC_TX.lock().unwrap() = Some(sync_tx);
                     }
 
                     let (_, pk) = get_or_create_signing_key_at(config_path);
@@ -995,7 +995,9 @@ fn is_google_connected(app: AppHandle) -> bool {
     let path = get_config_path(&app);
     if let Ok(content) = std::fs::read_to_string(path) {
         if let Ok(config) = serde_json::from_str::<OnboardingConfig>(&content) {
-            return config.google_access_token.is_some() || config.google_refresh_token.is_some();
+            // Strictly require a refresh_token to be considered "connected"
+            // If they only have an access_token, it will eventually expire and fail.
+            return config.google_refresh_token.is_some();
         }
     }
     false
@@ -1040,14 +1042,21 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                 let response = tiny_http::Response::empty(200)
                     .with_header(tiny_http::Header::from_bytes(&b"Allow"[..], &b"GET, HEAD, POST, OPTIONS, PROPFIND, PUT, DELETE, MKCOL, MOVE, LOCK, UNLOCK, PROPPATCH"[..]).unwrap())
                     .with_header(tiny_http::Header::from_bytes(&b"DAV"[..], &b"1, 2"[..]).unwrap())
-                    .with_header(tiny_http::Header::from_bytes(&b"MS-Author-Via"[..], &b"DAV"[..]).unwrap());
+                    .with_header(tiny_http::Header::from_bytes(&b"MS-Author-Via"[..], &b"DAV"[..]).unwrap())
+                    .with_header(tiny_http::Header::from_bytes(&b"Content-Length"[..], &b"0"[..]).unwrap());
                 let _ = request.respond(response);
             }
             "PROPPATCH" => {
-                let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n<D:multistatus xmlns:D=\"DAV:\">\n<D:response>\n");
-                xml.push_str(&format!("<D:href>{}</D:href>\n", url));
-                xml.push_str("<D:propstat>\n<D:status>HTTP/1.1 200 OK</D:status>\n</D:propstat>\n</D:response>\n</D:multistatus>");
-                
+                let xml = format!(
+                    r#"<?xml version="1.0" encoding="utf-8" ?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>{}</D:href>
+    <D:propstat>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#, url);
                 let response = tiny_http::Response::from_string(xml)
                     .with_status_code(207)
                     .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/xml; charset=utf-8"[..]).unwrap());
@@ -1064,25 +1073,45 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                 if let Some(ino) = target_ino {
                     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n<D:multistatus xmlns:D=\"DAV:\">\n");
                     
-                    // Root directory implicitly handled since it's not in the HashMap
                     if ino == 1 {
-                        let mut res = String::new();
-                        res.push_str("<D:response>\n");
-                        res.push_str(&format!("<D:href>{}</D:href>\n", if url.is_empty() { "/" } else { &url }));
-                        res.push_str("<D:propstat>\n<D:prop>\n");
-                        res.push_str("<D:displayname>VaultRoot</D:displayname>\n");
-                        res.push_str("<D:resourcetype><D:collection/></D:resourcetype>\n");
-                        res.push_str("<D:getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</D:getlastmodified>\n");
-                        res.push_str("</D:prop>\n<D:status>HTTP/1.1 200 OK</D:status>\n</D:propstat>\n</D:response>\n");
-                        xml.push_str(&res);
+                        xml.push_str("<D:response>\n");
+                        xml.push_str(&format!("<D:href>{}</D:href>\n", url));
+                        xml.push_str("<D:propstat>\n<D:prop>\n");
+                        xml.push_str("<D:displayname>VaultRoot</D:displayname>\n");
+                        xml.push_str("<D:resourcetype><D:collection/></D:resourcetype>\n");
+                        xml.push_str("<D:creationdate>2024-01-01T00:00:00Z</D:creationdate>\n");
+                        xml.push_str("<D:getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</D:getlastmodified>\n");
+                        xml.push_str("</D:prop>\n<D:status>HTTP/1.1 200 OK</D:status>\n</D:propstat>\n</D:response>\n");
                     } else if let Some(f) = files.get(&ino) { 
                         xml.push_str(&generate_dav_response(f, &url)); 
                     }
 
                     if depth != "0" {
                         for f in files.values() {
-                            if f.parent_ino == ino && f.ino != ino {
-                                let child_url = if url == "/" { format!("/{}", f.name) } else { format!("{}/{}", url, f.name) };
+                            // Because VaultFS stores full paths in `f.name` like "BLEACK/28.jpeg" and hardcodes `parent_ino: 1`,
+                            // we must parse the paths here to simulate folders for Windows WebClient.
+                            let mut include = false;
+                            let mut child_url = String::new();
+                            
+                            if ino == 1 {
+                                // Root directory: include files/folders with NO slashes
+                                if !f.name.contains('/') && f.name != "" {
+                                    include = true;
+                                    child_url = format!("/{}", f.name);
+                                }
+                            } else {
+                                // Subdirectory: include files/folders directly underneath this target_path
+                                let parent_prefix = format!("{}/", target_path);
+                                if f.name.starts_with(&parent_prefix) && f.name.len() > parent_prefix.len() {
+                                    let remainder = &f.name[parent_prefix.len()..];
+                                    if !remainder.contains('/') {
+                                        include = true;
+                                        child_url = format!("{}/{}", url, remainder);
+                                    }
+                                }
+                            }
+                            
+                            if include {
                                 xml.push_str(&generate_dav_response(f, &child_url));
                             }
                         }
@@ -1135,7 +1164,7 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
 
                 let existing_ino = files.values().find(|f| f.name == path).map(|f| f.ino);
                 
-                let res: Result<(), String> = if let Some(ino) = existing_ino {
+                let res: Result<bool, String> = if let Some(ino) = existing_ino {
                     let shadow_path = shadow_dir.join(format!("{}.blob", ino));
                     let _ = std_fs::create_dir_all(&shadow_dir);
                     let encrypted = crypto::encrypt_local_data(&data, key_state.clone()).unwrap();
@@ -1150,7 +1179,7 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                     if let Some(tx) = sync_tx.as_ref() {
                         let _ = tx.send(fs::SyncCommand::SyncFile { ino });
                     }
-                    Ok(())
+                    Ok(true) // Was overwrite
                 } else {
                     let next_ino = files.keys().max().cloned().unwrap_or(1) + 1;
                     let shadow_path = shadow_dir.join(format!("{}.blob", next_ino));
@@ -1168,6 +1197,7 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                         modified_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
                         shadow_path: Some(shadow_path),
                         cloud_blob_id: None,
+                        last_synced_hash: None,
                     };
                     files.insert(next_ino, new_file);
                     
@@ -1180,11 +1210,12 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                         let _ = tx.send(fs::SyncCommand::SyncFile { ino: next_ino });
                         let _ = tx.send(fs::SyncCommand::SyncIndex);
                     }
-                    Ok(())
+                    Ok(false) // Was new
                 };
 
-                if res.is_ok() {
-                    let _ = request.respond(tiny_http::Response::empty(201));
+                if let Ok(is_overwrite) = res {
+                    let status = if is_overwrite { 200 } else { 201 };
+                    let _ = request.respond(tiny_http::Response::empty(status));
                 } else {
                     let _ = request.respond(tiny_http::Response::empty(500));
                 }
@@ -1222,7 +1253,8 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                     modified_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
                     shadow_path: None,
                     cloud_blob_id: None,
-                };
+                    last_synced_hash: None,
+                    };
                 files.insert(next_ino, new_dir);
                 
                 let sync_tx = SYNC_TX.lock().unwrap();
@@ -1287,8 +1319,14 @@ fn generate_dav_response(f: &fs::VaultFile, href: &str) -> String {
     res.push_str(&format!("<D:href>{}</D:href>\n", href));
     res.push_str("<D:propstat>\n<D:prop>\n");
     res.push_str(&format!("<D:displayname>{}</D:displayname>\n", f.name));
-    if is_dir { res.push_str("<D:resourcetype><D:collection/></D:resourcetype>\n"); }
-    else { res.push_str("<D:resourcetype/>\n"); res.push_str(&format!("<D:getcontentlength>{}</D:getcontentlength>\n", f.size)); }
+    if is_dir { 
+        res.push_str("<D:resourcetype><D:collection/></D:resourcetype>\n"); 
+    } else { 
+        res.push_str("<D:resourcetype/>\n"); 
+        res.push_str(&format!("<D:getcontentlength>{}</D:getcontentlength>\n", f.size)); 
+        res.push_str("<D:getcontenttype>application/octet-stream</D:getcontenttype>\n");
+    }
+    res.push_str("<D:creationdate>2024-01-01T00:00:00Z</D:creationdate>\n");
     res.push_str("<D:getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</D:getlastmodified>\n");
     res.push_str("</D:prop>\n<D:status>HTTP/1.1 200 OK</D:status>\n</D:propstat>\n</D:response>\n");
     res

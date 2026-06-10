@@ -5568,6 +5568,7 @@ dependencies = [
  "ed25519-dalek",
  "fuser",
  "futures-util",
+ "hex",
  "imap",
  "libc",
  "log",

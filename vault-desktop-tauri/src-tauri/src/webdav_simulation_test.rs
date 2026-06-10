@@ -19,10 +19,11 @@ fn test_webdav_deep_simulation() {
             name: "New Folder".to_string(),
             kind: VaultFileType::Directory,
             size: 0,
-            modified_at: 0,
+            modified_at: 1715900000,
             shadow_path: None,
             cloud_blob_id: None,
-        });
+            last_synced_hash: None,
+            });
     }
 
     // Simulate PUT (Upload File)
@@ -38,6 +39,7 @@ fn test_webdav_deep_simulation() {
             modified_at: 0,
             shadow_path: None, // In real app, this points to encrypted blob
             cloud_blob_id: None,
+            last_synced_hash: None,
         });
     }
 

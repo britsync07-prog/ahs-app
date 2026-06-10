@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { File, Folder, HardDrive, Shield, CheckCircle2, Clock, RefreshCcw, Trash2, FileDown, FolderPlus } from "lucide-react";
+import { File, Folder, HardDrive, Shield, CheckCircle2, Clock, RefreshCcw, Trash2, FileDown, FolderPlus, ShieldAlert } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -13,17 +13,27 @@ interface VaultFile {
   size: number;
   modified_at: number;
   cloud_blob_id?: string;
+  fullPath?: string;
 }
 
 export const VaultExplorer: React.FC = () => {
-  const [files, setFiles] = useState<VaultFile[]>([]);
-  const [currentIno, setCurrentIno] = useState<number>(1);
-  const [history, setHistory] = useState<number[]>([]);
+  const [backendFiles, setBackendFiles] = useState<VaultFile[]>([]);
+  const [currentPath, setCurrentPath] = useState<string>("");
+  const [googleConnected, setGoogleConnected] = useState<boolean>(true);
+
+  const checkSyncStatus = async () => {
+    try {
+      const connected = await invoke<boolean>("is_google_connected");
+      setGoogleConnected(connected);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const fetchFiles = async () => {
     try {
       const result = await invoke<VaultFile[]>("list_vault_files");
-      setFiles(result);
+      setBackendFiles(result);
     } catch (e) {
       console.error("Failed to list vault files:", e);
     }
@@ -31,49 +41,67 @@ export const VaultExplorer: React.FC = () => {
 
   useEffect(() => {
     fetchFiles();
-    
-    // 1. Instant event-based updates
+    checkSyncStatus();
     const unlisten = listen<VaultFile[]>("vault-files-updated", (event) => {
-      console.log("Real-time vault update received");
-      setFiles(event.payload);
+      setBackendFiles(event.payload);
+      checkSyncStatus();
     });
-
-    // 2. Polling fallback
-    const interval = setInterval(fetchFiles, 5000);
-
+    const interval = setInterval(() => {
+      fetchFiles();
+      checkSyncStatus();
+    }, 5000);
     return () => {
       clearInterval(interval);
       unlisten.then(f => f());
     };
   }, []);
 
-  const currentFiles = files.filter(f => 
-    f.parent_ino === currentIno && 
-    f.ino !== currentIno && 
-    !f.name.startsWith('.')
-  );
-  const getPath = (ino: number): string => {
-    if (ino === 1) return "";
-    const f = files.find(x => x.ino === ino);
-    if (!f) return "";
-    const parentPath = getPath(f.parent_ino);
-    return parentPath + "/" + f.name;
-  };
+  const currentFiles = React.useMemo(() => {
+    const virtualFiles = new Map<string, VaultFile>();
+    
+    backendFiles.forEach(f => {
+      if (f.name.startsWith('.')) return;
+      
+      const normalizedPath = f.name.replace(/\\/g, '/');
+      const isUnderCurrent = currentPath === "" || normalizedPath.startsWith(currentPath + "/");
+      
+      if (isUnderCurrent) {
+        const relativePath = currentPath === "" ? normalizedPath : normalizedPath.substring(currentPath.length + 1);
+        const parts = relativePath.split('/');
+        
+        if (parts.length > 1) {
+          const folderName = parts[0];
+          if (!virtualFiles.has(folderName)) {
+            virtualFiles.set(folderName, {
+              ino: f.ino,
+              parent_ino: f.parent_ino,
+              name: folderName,
+              kind: 'Directory',
+              size: 0,
+              modified_at: f.modified_at,
+            });
+          }
+        } else if (parts.length === 1 && parts[0] !== "") {
+          virtualFiles.set(parts[0], {
+            ...f,
+            name: parts[0],
+            fullPath: f.name 
+          });
+        }
+      }
+    });
+    return Array.from(virtualFiles.values());
+  }, [backendFiles, currentPath]);
 
-  const currentPathName = getPath(currentIno) || "/";
-
-  const navigateTo = (ino: number) => {
-    setHistory([...history, currentIno]);
-    setCurrentIno(ino);
+  const navigateTo = (folderName: string) => {
+    setCurrentPath(prev => prev === "" ? folderName : `${prev}/${folderName}`);
   };
 
   const navigateBack = () => {
-    const newHistory = [...history];
-    const prev = newHistory.pop();
-    if (prev !== undefined) {
-      setHistory(newHistory);
-      setCurrentIno(prev);
-    }
+    if (currentPath === "") return;
+    const parts = currentPath.split('/');
+    parts.pop();
+    setCurrentPath(parts.join('/'));
   };
 
   const handleUpload = async () => {
@@ -83,19 +111,7 @@ export const VaultExplorer: React.FC = () => {
         title: "Select File to Encrypt & Upload"
       });
       if (selected) {
-        // Find path for current folder
-        let pathParts = [];
-        let tempIno = currentIno;
-        while (tempIno !== 1) {
-           const f = files.find(x => x.ino === tempIno);
-           if (f) {
-             pathParts.unshift(f.name);
-             tempIno = f.parent_ino;
-           } else break;
-        }
-        const destPrefix = pathParts.join("/");
-        
-        await invoke("upload_to_vault", { sourcePath: selected, destPrefix });
+        await invoke("upload_to_vault", { sourcePath: selected, destPrefix: currentPath });
         await message("File successfully encrypted and added to your secure vault.", { title: "Success", kind: "info" });
         fetchFiles();
       }
@@ -115,19 +131,7 @@ export const VaultExplorer: React.FC = () => {
     }
 
     try {
-      // Find path for current folder
-      let pathParts = [];
-      let tempIno = currentIno;
-      while (tempIno !== 1) {
-         const f = files.find(x => x.ino === tempIno);
-         if (f) {
-           pathParts.unshift(f.name);
-           tempIno = f.parent_ino;
-         } else break;
-      }
-      
-      const fullPath = pathParts.length > 0 ? `${pathParts.join("/")}/${newFolderName}` : newFolderName;
-
+      const fullPath = currentPath === "" ? newFolderName : `${currentPath}/${newFolderName}`;
       await invoke("create_vault_directory", { name: fullPath });
       setNewFolderName("");
       setIsNamingFolder(false);
@@ -140,11 +144,10 @@ export const VaultExplorer: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-2 duration-700">
-      {/* Explorer Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            {history.length > 0 && (
+            {currentPath !== "" && (
               <button onClick={navigateBack} className="p-1 hover:bg-matte-lighter rounded transition-colors">
                 <Clock className="w-4 h-4 rotate-180" />
               </button>
@@ -152,11 +155,33 @@ export const VaultExplorer: React.FC = () => {
             <h2 className="text-2xl font-bold text-text-primary">AHS Explorer</h2>
           </div>
           <p className="text-sm text-text-secondary">
-            Location: <span className="font-mono text-cyan/80">~/SecureAHS{currentPathName === "/" ? "" : currentPathName}</span>
+            Location: <span className="font-mono text-cyan/80">~/SecureAHS{currentPath === "" ? "" : "/" + currentPath}</span>
           </p>
         </div>
         
         <div className="flex gap-3">
+          {!googleConnected && (
+            <button 
+              onClick={async () => {
+                try {
+                  const tokens = await invoke<any>("login_google");
+                  await invoke("save_google_tokens", {
+                    accessToken: tokens.access_token,
+                    refreshToken: tokens.refresh_token
+                  });
+                  checkSyncStatus();
+                  await message("Google Drive connected successfully. Cloud backups are now active.", { title: "Success", kind: "info" });
+                } catch (e) {
+                  console.error(e);
+                  await message(`Failed to connect Google Drive: ${e}`, { title: "Error", kind: "error" });
+                }
+              }}
+              className="px-4 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-500 text-[10px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all flex items-center gap-2"
+            >
+              <RefreshCcw className="w-3 h-3 animate-pulse" />
+              Connect Google Drive (Backups Disabled)
+            </button>
+          )}
           <button 
             onClick={fetchFiles} 
             className="p-2.5 rounded-xl bg-matte-lighter border border-white/5 text-text-tertiary hover:text-cyan hover:border-cyan/30 transition-all shadow-sm"
@@ -175,7 +200,6 @@ export const VaultExplorer: React.FC = () => {
         </div>
       </div>
 
-      {/* File List Table */}
       <div className="flex-1 bg-matte/40 rounded-2xl border border-border-primary overflow-hidden flex flex-col">
         <div className="grid grid-cols-12 px-6 py-4 border-b border-border-primary text-[10px] font-bold uppercase tracking-[0.1em] text-text-tertiary">
           <div className="col-span-6">Name</div>
@@ -188,12 +212,12 @@ export const VaultExplorer: React.FC = () => {
           <AnimatePresence mode="popLayout">
             {currentFiles.map((file) => (
               <motion.div 
-                key={file.ino} 
+                key={file.name} 
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95 }}
                 transition={{ duration: 0.2 }}
-                onDoubleClick={() => file.kind === 'Directory' ? navigateTo(file.ino) : null}
+                onDoubleClick={() => file.kind === 'Directory' ? navigateTo(file.name) : null}
                 className="grid grid-cols-12 px-6 py-4 items-center border-b border-white/[0.02] hover:bg-white/[0.03] transition-all cursor-default group"
               >
                 <div className="col-span-6 flex items-center gap-4">
@@ -230,18 +254,7 @@ export const VaultExplorer: React.FC = () => {
                             title: "Select Destination Folder"
                           });
                           if (savePath) {
-                            // Calculate full relative path from root
-                            let pathParts = [file.name];
-                            let tempIno = file.parent_ino;
-                            while (tempIno !== 1) {
-                               const f = files.find(x => x.ino === tempIno);
-                               if (f) {
-                                 pathParts.unshift(f.name);
-                                 tempIno = f.parent_ino;
-                               } else break;
-                            }
-                            const fullPath = pathParts.join("/");
-
+                            const fullPath = file.fullPath || (currentPath === "" ? file.name : `${currentPath}/${file.name}`);
                             await invoke("download_from_vault", { 
                               name: fullPath, 
                               destPath: `${savePath}/${file.name}` 
@@ -262,18 +275,7 @@ export const VaultExplorer: React.FC = () => {
                       onClick={async () => {
                         if (confirm(`Are you sure you want to delete ${file.name}?`)) {
                           try {
-                            // Calculate full relative path from root
-                            let pathParts = [file.name];
-                            let tempIno = file.parent_ino;
-                            while (tempIno !== 1) {
-                               const f = files.find(x => x.ino === tempIno);
-                               if (f) {
-                                 pathParts.unshift(f.name);
-                                 tempIno = f.parent_ino;
-                               } else break;
-                            }
-                            const fullPath = pathParts.join("/");
-
+                            const fullPath = file.fullPath || (currentPath === "" ? file.name : `${currentPath}/${file.name}`);
                             await invoke("delete_from_vault", { ino: file.ino, name: fullPath });
                             fetchFiles();
                           } catch (e) {
@@ -303,27 +305,31 @@ export const VaultExplorer: React.FC = () => {
             </motion.div>
           )}
         </div>
-...
 
-        {/* Explorer Footer Status */}
         <div className="px-6 py-3 bg-matte border-t border-border-primary flex items-center justify-between">
           <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
-              <CheckCircle2 className="w-3 h-3 text-emerald" />
-              All Files Synced
-            </div>
+            {googleConnected ? (
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-emerald">
+                <CheckCircle2 className="w-3 h-3" />
+                Cloud Backups Active
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-amber-500">
+                <ShieldAlert className="w-3 h-3" />
+                Local-Only Storage
+              </div>
+            )}
             <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
               <HardDrive className="w-3 h-3 text-cyan" />
-              Storage-Only Active
+              Hardware Identity Verified
             </div>
           </div>
           <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-emerald">
             <Clock className="w-3 h-3" />
-            Live Disk Decryption Active
+            Zero-Knowledge Encryption Active
           </div>
         </div>
       </div>
-      {/* Folder Name Modal */}
       <AnimatePresence>
         {isNamingFolder && (
           <motion.div 

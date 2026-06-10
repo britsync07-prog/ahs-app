@@ -160,9 +160,10 @@ pub fn stream_upload_blob(
         .send()
         .map_err(|e| format!("Upload failed: {}", e))?;
 
-    if res.status() == reqwest::StatusCode::UNAUTHORIZED {
-        // Try to refresh token and retry ONCE
+    if res.status() == reqwest::StatusCode::UNAUTHORIZED || res.status() == reqwest::StatusCode::INTERNAL_SERVER_ERROR {
+        eprintln!("crypto: Received {} from backend. Attempting token refresh...", res.status());
         if let Ok(new_token) = crate::oauth::refresh_google_token_blocking(config_path) {
+            println!("crypto: Token refreshed successfully. Retrying upload...");
             let file = std::fs::File::open(shadow_path).map_err(|e| e.to_string())?;
             let client = reqwest::blocking::Client::new();
             res = client
@@ -174,6 +175,8 @@ pub fn stream_upload_blob(
                 .body(file)
                 .send()
                 .map_err(|e| format!("Upload retry failed: {}", e))?;
+        } else {
+            eprintln!("crypto: Failed to refresh Google Token.");
         }
     }
 
@@ -181,7 +184,10 @@ pub fn stream_upload_blob(
         let body: serde_json::Value = res.json().map_err(|e| e.to_string())?;
         Ok(body["blob_id"].as_str().unwrap_or("unknown").to_string())
     } else {
-        Err(format!("Server returned error: {}", res.status()))
+        let status = res.status();
+        let err_text = res.text().unwrap_or_default();
+        eprintln!("crypto: Upload failed permanently with status {}. Body: {}", status, err_text);
+        Err(format!("Server returned error: {}", status))
     }
 }
 

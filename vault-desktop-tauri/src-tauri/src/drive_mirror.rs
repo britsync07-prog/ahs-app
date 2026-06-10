@@ -28,6 +28,14 @@ pub fn is_hash_unchanged(ino: u64, shadow_path: &PathBuf) -> bool {
     false
 }
 
+pub fn is_hash_unchanged_with_stored(stored_hash_hex: &str, shadow_path: &PathBuf) -> bool {
+    if let Ok(hash) = compute_file_sha256(shadow_path) {
+        let hex_hash = hex::encode(hash);
+        return hex_hash == stored_hash_hex;
+    }
+    false
+}
+
 fn compute_file_sha256(path: &PathBuf) -> Result<[u8; 32], String> {
     let mut file = File::open(path).map_err(|e| e.to_string())?;
     let mut hasher = Sha256::new();

@@ -75,7 +75,7 @@ pub struct OpenFile {
     pub dirty: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum VaultFileType {
     Directory,
     RegularFile,
@@ -91,6 +91,7 @@ pub struct VaultFile {
     pub modified_at: u64,
     pub shadow_path: Option<PathBuf>, // Path to encrypted blob on local disk
     pub cloud_blob_id: Option<String>, // ID of the encrypted blob on cloud
+    pub last_synced_hash: Option<String>, // SHA256 of the content when it was last synced
 }
 
 #[derive(Eq, Hash, PartialEq)]
@@ -206,10 +207,10 @@ fn spawn_sync_worker(
                         continue;
                     }
 
-                    let (name, shadow_path, old_id) = {
+                    let (name, shadow_path, old_id, stored_hash) = {
                         let f_lock = worker_files.lock().unwrap();
                         if let Some(f) = f_lock.get(&ino) {
-                            (f.name.clone(), f.shadow_path.clone(), f.cloud_blob_id.clone())
+                            (f.name.clone(), f.shadow_path.clone(), f.cloud_blob_id.clone(), f.last_synced_hash.clone())
                         } else {
                             PENDING_SYNCS.fetch_sub(1, Ordering::SeqCst);
                             continue;
@@ -217,8 +218,14 @@ fn spawn_sync_worker(
                     };
 
                     if let Some(path) = shadow_path {
-                        if crate::drive_mirror::is_hash_unchanged(ino, &path) {
-                            println!("VaultFS Worker: Skipping sync for {} (content unchanged)", name);
+                        let hash_unchanged = if let Some(h) = stored_hash {
+                            crate::drive_mirror::is_hash_unchanged_with_stored(&h, &path)
+                        } else {
+                            crate::drive_mirror::is_hash_unchanged(ino, &path)
+                        };
+
+                        if hash_unchanged && old_id.is_some() {
+                            println!("VaultFS Worker: Skipping sync for {} (content unchanged and already in cloud)", name);
                             PENDING_SYNCS.fetch_sub(1, Ordering::SeqCst);
                             continue;
                         }
@@ -229,16 +236,29 @@ fn spawn_sync_worker(
                             worker_key.clone(),
                         ) {
                             crate::drive_mirror::update_cached_hash(ino, &path);
-                            // Save the cloud blob ID
+                            
+                            // Compute the hash we just uploaded to save in index
+                            let new_hash_hex = std_fs::read(&path).ok().map(|data| {
+                                use sha2::{Sha256, Digest};
+                                let mut hasher = Sha256::new();
+                                hasher.update(data);
+                                hex::encode(hasher.finalize())
+                            });
+
+                            // Save the cloud blob ID and hash
                             let mut f_lock = worker_files.lock().unwrap();
                             if let Some(f) = f_lock.get_mut(&ino) {
-                                f.cloud_blob_id = Some(id);
+                                f.cloud_blob_id = Some(id.clone());
+                                f.last_synced_hash = new_hash_hex;
                             }
                             drop(f_lock);
 
                             // Purge old blob if it existed
                             if let Some(oid) = old_id {
-                                let _ = internal_purge_blobs(&worker_config_path, vec![oid]);
+                                if oid != id {
+                                    println!("VaultFS Worker: Purging old cloud version {}", oid);
+                                    let _ = internal_purge_blobs(&worker_config_path, vec![oid]);
+                                }
                             }
 
                             // CRITICAL: Notify that index needs update!
@@ -416,6 +436,7 @@ impl VaultFS {
                 modified_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
                 shadow_path: None,
                 cloud_blob_id: None,
+                last_synced_hash: None,
             },
         );
 
@@ -434,8 +455,6 @@ impl VaultFS {
                         if !path.exists() {
                             println!("VaultFS: Shadow path {:?} missing for {}, resetting", path, file.name);
                             file.shadow_path = None;
-                        } else {
-                            crate::drive_mirror::update_cached_hash(file.ino, path);
                         }
                     }
                 }
@@ -515,6 +534,20 @@ impl VaultFS {
             let _ = tx.send(SyncCommand::PullAll);
         }
 
+        // Check for unsynced files and trigger upload (Now queues all for robust check)
+        let sync_inos: Vec<u64> = {
+            let files_lock = shared_files.lock().unwrap();
+            files_lock.iter()
+                .filter(|(_, f)| f.shadow_path.is_some() && f.kind == VaultFileType::RegularFile)
+                .map(|(ino, _)| *ino)
+                .collect()
+        };
+
+        for ino in sync_inos {
+            PENDING_SYNCS.fetch_add(1, Ordering::SeqCst);
+            let _ = tx.send(SyncCommand::SyncFile { ino });
+        }
+
         #[cfg(not(windows))]
         let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
 
@@ -555,6 +588,7 @@ impl VaultFS {
                 modified_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
                 shadow_path: None,
                 cloud_blob_id: None,
+                last_synced_hash: None,
             },
         );
 
@@ -656,6 +690,21 @@ impl VaultFS {
             let _ = tx.send(SyncCommand::PullAll);
         }
 
+        // Check for unsynced files and trigger upload
+        let unsynced_inos: Vec<u64> = {
+            let files_lock = files_arc.lock().unwrap();
+            files_lock.iter()
+                .filter(|(_, f)| f.shadow_path.is_some() && f.cloud_blob_id.is_none() && f.kind == VaultFileType::RegularFile)
+                .map(|(ino, _)| *ino)
+                .collect()
+        };
+
+        for ino in unsynced_inos {
+            println!("[TEST] VaultFS: Detecting unsynced file (ino {}), queuing for upload", ino);
+            PENDING_SYNCS.fetch_add(1, Ordering::SeqCst);
+            let _ = tx.send(SyncCommand::SyncFile { ino });
+        }
+
         #[cfg(not(windows))]
         let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
 
@@ -708,6 +757,7 @@ impl VaultFS {
             modified_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
             shadow_path: Some(shadow_path.clone()),
             cloud_blob_id: None,
+            last_synced_hash: None,
         };
         let file = std_fs::OpenOptions::new()
             .read(true)
@@ -803,6 +853,7 @@ impl VaultFS {
                 f.size = new_size;
             }
             f.modified_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            f.cloud_blob_id = None; // Mark as dirty/unsynced
         }
 
         Ok(data.len())
@@ -1226,6 +1277,7 @@ impl Filesystem for VaultFS {
                 f.size = new_size;
             }
             f.modified_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            f.cloud_blob_id = None; // Mark as dirty/unsynced
         }
 
         reply.written(data.len() as u32);
@@ -1267,6 +1319,7 @@ impl Filesystem for VaultFS {
             modified_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
             shadow_path: Some(shadow_path.clone()),
             cloud_blob_id: None,
+            last_synced_hash: None,
         };
         let file = match std::fs::OpenOptions::new()
             .read(true)
@@ -1388,6 +1441,7 @@ impl Filesystem for VaultFS {
                     }
                 }
                 f.size = s;
+                f.cloud_blob_id = None; // Mark as dirty/unsynced
             }
             let attr = self.make_attr(f);
             drop(files);
@@ -1468,6 +1522,7 @@ impl Filesystem for VaultFS {
             modified_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
             shadow_path: None,
             cloud_blob_id: None,
+            last_synced_hash: None,
         };
         files.insert(ino, new_dir.clone());
         drop(files);
@@ -1524,6 +1579,7 @@ impl Filesystem for VaultFS {
             modified_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
             shadow_path: Some(shadow_path.clone()),
             cloud_blob_id: None,
+            last_synced_hash: None,
         };
         files.insert(ino, new_file.clone());
         drop(files);
