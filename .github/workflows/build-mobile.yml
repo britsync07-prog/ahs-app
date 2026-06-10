@@ -22,6 +22,10 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x vault-mobile-auth/gradlew
 
+      - name: Fix line endings for gradlew
+        run: sed -i 's/\r$//' gradlew
+        working-directory: vault-mobile-auth
+
       - name: Build with Gradle
         run: ./gradlew assembleDebug
         working-directory: vault-mobile-auth
