@@ -138,6 +138,16 @@ impl Clone for PrioritySender {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SyncProgress {
+    pub ino: u64,
+    pub name: String,
+    pub total_size: u64,
+    pub current_bytes: u64,
+    pub status: String, // "syncing", "downloading", "restoring"
+    pub percentage: u8,
+}
+
 pub struct VaultFS {
     pub app_handle: Option<AppHandle>,
     pub files: Arc<Mutex<HashMap<u64, VaultFile>>>,
@@ -148,6 +158,7 @@ pub struct VaultFS {
     pub shadow_dir: PathBuf,
     pub open_files: Arc<Mutex<HashMap<u64, Arc<Mutex<OpenFile>>>>>,
     pub next_fh: std::sync::atomic::AtomicU64,
+    pub sync_progress: Arc<Mutex<HashMap<u64, SyncProgress>>>,
     #[cfg(not(windows))]
     pub uid: u32,
     #[cfg(not(windows))]
@@ -253,6 +264,20 @@ fn spawn_sync_worker(
                             }
                             drop(f_lock);
 
+                            // Progress Update: 100%
+                            if let Some(handle) = &app_handle {
+                                use tauri::Emitter;
+                                let progress = SyncProgress {
+                                    ino,
+                                    name: name.clone(),
+                                    total_size: std_fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
+                                    current_bytes: std_fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
+                                    status: "complete".to_string(),
+                                    percentage: 100,
+                                };
+                                let _ = handle.emit("vault-sync-progress", progress);
+                            }
+
                             // Purge old blob if it existed
                             if let Some(oid) = old_id {
                                 if oid != id {
@@ -263,6 +288,19 @@ fn spawn_sync_worker(
 
                             // CRITICAL: Notify that index needs update!
                             let _ = sync_tx_clone.send(SyncCommand::SyncIndex);
+                        } else {
+                            // Emit failure progress
+                             if let Some(handle) = &app_handle {
+                                use tauri::Emitter;
+                                let _ = handle.emit("vault-sync-progress", SyncProgress {
+                                    ino,
+                                    name: name.clone(),
+                                    total_size: 0,
+                                    current_bytes: 0,
+                                    status: "failed".to_string(),
+                                    percentage: 0,
+                                });
+                            }
                         }
                     }
                     PENDING_SYNCS.fetch_sub(1, Ordering::SeqCst);
@@ -357,21 +395,27 @@ fn spawn_sync_worker(
                     println!("VaultFS Worker: Starting full restoration from cloud...");
                     let files_to_pull = {
                         let f_lock = worker_files.lock().unwrap();
-                        
-                        // Emit initial list so UI knows what we're waiting for
-                        if let Some(handle) = &app_handle {
-                            use tauri::Emitter;
-                            let list: Vec<VaultFile> = f_lock.values().cloned().collect();
-                            let _ = handle.emit("vault-files-updated", list);
-                        }
-
                         f_lock.values().cloned().collect::<Vec<VaultFile>>()
                     };
 
                     let total = files_to_pull.len();
                     for (i, file) in files_to_pull.into_iter().enumerate() {
                         if let Some(blob_id) = file.cloud_blob_id {
-                            println!("VaultFS Worker: Restoration progress [{}/{}] Downloading {}...", i+1, total, file.name);
+                            // Progress Update: Restoration Started
+                            if let Some(handle) = &app_handle {
+                                use tauri::Emitter;
+                                let percentage = (((i) as f32 / total as f32) * 100.0) as u8;
+                                let progress = SyncProgress {
+                                    ino: file.ino,
+                                    name: file.name.clone(),
+                                    total_size: file.size,
+                                    current_bytes: 0,
+                                    status: "restoring".to_string(),
+                                    percentage,
+                                };
+                                let _ = handle.emit("vault-sync-progress", progress);
+                            }
+
                             let shadow_path = worker_local_index_path.parent().unwrap()
                                 .join(".vault_shadow")
                                 .join(format!("{}.blob", file.ino));
@@ -391,11 +435,19 @@ fn spawn_sync_worker(
                                 }
                                 crate::drive_mirror::update_cached_hash(file.ino, &shadow_path);
                                 
-                                // Emit UI event
+                                // Progress Update: Restoration Success
                                 if let Some(handle) = &app_handle {
                                     use tauri::Emitter;
-                                    let list: Vec<VaultFile> = f_lock.values().cloned().collect();
-                                    let _ = handle.emit("vault-files-updated", list);
+                                    let percentage = (((i + 1) as f32 / total as f32) * 100.0) as u8;
+                                    let progress = SyncProgress {
+                                        ino: file.ino,
+                                        name: file.name.clone(),
+                                        total_size: file.size,
+                                        current_bytes: file.size,
+                                        status: "restored".to_string(),
+                                        percentage,
+                                    };
+                                    let _ = handle.emit("vault-sync-progress", progress);
                                 }
                             } else {
                                 eprintln!("VaultFS Worker: Failed to download blob for {}", file.name);
@@ -564,6 +616,7 @@ impl VaultFS {
                 shadow_dir,
                 open_files: Arc::new(Mutex::new(HashMap::new())),
                 next_fh: std::sync::atomic::AtomicU64::new(1),
+                sync_progress: Arc::new(Mutex::new(HashMap::new())),
                 #[cfg(not(windows))]
                 uid,
                 #[cfg(not(windows))]
@@ -721,6 +774,7 @@ impl VaultFS {
                 shadow_dir,
                 open_files: Arc::new(Mutex::new(HashMap::new())),
                 next_fh: std::sync::atomic::AtomicU64::new(1),
+                sync_progress: Arc::new(Mutex::new(HashMap::new())),
                 #[cfg(not(windows))]
                 uid,
                 #[cfg(not(windows))]

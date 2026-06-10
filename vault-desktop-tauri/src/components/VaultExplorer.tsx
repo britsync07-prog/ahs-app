@@ -20,6 +20,31 @@ export const VaultExplorer: React.FC = () => {
   const [backendFiles, setBackendFiles] = useState<VaultFile[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("");
   const [googleConnected, setGoogleConnected] = useState<boolean>(true);
+  const [syncingFiles, setSyncingFiles] = useState<Record<number, any>>({});
+  const [turboBoost, setTurboBoost] = useState(false);
+
+  useEffect(() => {
+    const unlisten = listen("vault-sync-progress", (event: any) => {
+      const progress = event.payload;
+      setSyncingFiles(prev => ({
+        ...prev,
+        [progress.ino]: progress
+      }));
+      
+      if (progress.status === 'complete' || progress.status === 'restored' || progress.status === 'failed') {
+        setTimeout(() => {
+          setSyncingFiles(prev => {
+            const next = { ...prev };
+            delete next[progress.ino];
+            return next;
+          });
+        }, 3000);
+      }
+    });
+    return () => { unlisten.then(f => f()); };
+  }, []);
+
+  const activeSyncs = Object.values(syncingFiles).filter(f => f.status !== 'complete' && f.status !== 'restored' && f.status !== 'failed');
 
   const checkSyncStatus = async () => {
     try {
@@ -159,7 +184,17 @@ export const VaultExplorer: React.FC = () => {
           </p>
         </div>
         
-        <div className="flex gap-3">
+        <div className="flex gap-3 items-center">
+          <div className="flex items-center gap-2 bg-matte-lighter border border-white/5 rounded-xl px-4 py-2">
+            <span className="text-[10px] font-bold text-text-tertiary uppercase tracking-widest">Turbo Boost</span>
+            <button 
+              onClick={() => setTurboBoost(!turboBoost)}
+              className={`w-8 h-4 rounded-full transition-all relative ${turboBoost ? 'bg-cyan shadow-[0_0_10px_rgba(0,242,255,0.5)]' : 'bg-white/10'}`}
+            >
+              <div className={`absolute top-1 w-2 h-2 rounded-full bg-white transition-all ${turboBoost ? 'left-5' : 'left-1'}`} />
+            </button>
+          </div>
+
           {!googleConnected && (
             <button 
               onClick={async () => {
@@ -199,6 +234,39 @@ export const VaultExplorer: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {activeSyncs.length > 0 && (
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-cyan/5 border border-cyan/20 rounded-2xl p-4 flex flex-col gap-3 mb-4"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-cyan">
+              <RefreshCcw className="w-4 h-4 animate-spin" />
+              <span className="text-xs font-bold uppercase tracking-wider">Active Sync Process ({activeSyncs.length})</span>
+            </div>
+            <span className="text-[10px] text-cyan/60 font-mono">Turbo Engine Active</span>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            {activeSyncs.map(sync => (
+              <div key={sync.ino} className="flex flex-col gap-1 bg-pure/30 p-2 rounded-lg border border-white/5">
+                <div className="flex justify-between text-[10px] text-text-secondary">
+                  <span className="truncate max-w-[150px]">{sync.name}</span>
+                  <span className="font-mono text-cyan">{sync.percentage}%</span>
+                </div>
+                <div className="h-1 bg-white/5 rounded-full overflow-hidden">
+                  <motion.div 
+                    className="h-full bg-cyan shadow-[0_0_10px_rgba(0,242,255,0.5)]"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${sync.percentage}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
 
       <div className="flex-1 bg-matte/40 rounded-2xl border border-border-primary overflow-hidden flex flex-col">
         <div className="grid grid-cols-12 px-6 py-4 border-b border-border-primary text-[10px] font-bold uppercase tracking-[0.1em] text-text-tertiary">

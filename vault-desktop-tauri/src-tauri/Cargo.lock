@@ -53,6 +53,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "ahs-vault"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "base64 0.21.7",
+ "bip39",
+ "dav-server",
+ "ed25519-dalek",
+ "fuser",
+ "futures-util",
+ "hex",
+ "imap",
+ "libc",
+ "log",
+ "native-tls",
+ "once_cell",
+ "priority-queue",
+ "rand",
+ "rayon",
+ "regex",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tempfile",
+ "tiny_http",
+ "tokio",
+ "tokio-tungstenite",
+ "url",
+ "uuid",
+ "webbrowser",
+ "window-vibrancy 0.7.1",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5555,49 +5598,6 @@ dependencies = [
  "js-sys",
  "serde_core",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "vault-desktop-tauri"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "base64 0.21.7",
- "bip39",
- "dav-server",
- "ed25519-dalek",
- "fuser",
- "futures-util",
- "hex",
- "imap",
- "libc",
- "log",
- "native-tls",
- "once_cell",
- "priority-queue",
- "rand",
- "rayon",
- "regex",
- "reqwest 0.11.27",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tempfile",
- "tiny_http",
- "tokio",
- "tokio-tungstenite",
- "url",
- "uuid",
- "webbrowser",
- "window-vibrancy 0.7.1",
- "x25519-dalek",
- "zeroize",
 ]
 
 [[package]]

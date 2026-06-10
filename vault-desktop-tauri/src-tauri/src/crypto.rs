@@ -15,9 +15,64 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use zeroize::Zeroize;
 use sha2::{Sha256, Digest};
 
-pub const BLOCK_SIZE: usize = 65536; // 64KB
-pub const OVERHEAD: usize = 12 + 16; // 12-byte Nonce + 16-byte GCM Tag
-pub const ENCRYPTED_BLOCK_SIZE: usize = BLOCK_SIZE + OVERHEAD;
+use rayon::prelude::*;
+
+pub const BLOCK_SIZE: usize = 128 * 1024; // Increase to 128KB for better throughput
+pub const ENCRYPTED_BLOCK_SIZE: usize = BLOCK_SIZE + 16 + 12; // Data + Tag + Nonce
+
+pub fn encrypt_local_data(data: &[u8], key_state: SharedKey) -> Result<Vec<u8>, String> {
+    let key_guard = key_state.read().unwrap();
+    let key_data = key_guard.as_ref().ok_or("Key not initialized")?.0;
+    let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&key_data);
+    let cipher = Aes256Gcm::new(key);
+
+    // Parallelize block processing for large files
+    let chunks: Vec<_> = data.chunks(BLOCK_SIZE).collect();
+    let encrypted_chunks: Result<Vec<Vec<u8>>, String> = chunks.into_par_iter().map(|chunk| {
+        let mut nonce_bytes = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(nonce, chunk)
+            .map_err(|e| format!("Encryption failed: {}", e))?;
+        
+        let mut block = Vec::with_capacity(ENCRYPTED_BLOCK_SIZE);
+        block.extend_from_slice(&nonce_bytes);
+        block.extend_from_slice(&ciphertext);
+        Ok(block)
+    }).collect();
+
+    let mut result = Vec::new();
+    for chunk in encrypted_chunks? {
+        result.extend_from_slice(&chunk);
+    }
+    Ok(result)
+}
+
+pub fn decrypt_local_data(data: &[u8], key_state: SharedKey) -> Result<Vec<u8>, String> {
+    let key_guard = key_state.read().unwrap();
+    let key_data = key_guard.as_ref().ok_or("Key not initialized")?.0;
+    let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&key_data);
+    let cipher = Aes256Gcm::new(key);
+
+    let chunks: Vec<_> = data.chunks(ENCRYPTED_BLOCK_SIZE).collect();
+    let decrypted_chunks: Result<Vec<Vec<u8>>, String> = chunks.into_par_iter().map(|chunk| {
+        if chunk.len() < 28 {
+            return Err("Invalid block size".to_string());
+        }
+        let nonce = Nonce::from_slice(&chunk[..12]);
+        let ciphertext = &chunk[12..];
+        cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|e| format!("Decryption failed: {}", e))
+    }).collect();
+
+    let mut result = Vec::new();
+    for chunk in decrypted_chunks? {
+        result.extend_from_slice(&chunk);
+    }
+    Ok(result)
+}
 
 pub fn derive_keys_from_mnemonic(phrase: &str) -> Result<([u8; 32], SigningKey, StaticSecret), String> {
     let mnemonic = Mnemonic::parse(phrase).map_err(|e| e.to_string())?;
@@ -263,44 +318,6 @@ pub fn stream_download_blob(
     res.copy_to(&mut dest_file).map_err(|e| e.to_string())?;
     
     Ok(())
-}
-
-pub fn encrypt_local_data(data: &[u8], key_state: SharedKey) -> Result<Vec<u8>, String> {
-    let key_data = {
-        let storage = key_state.read().map_err(|e| e.to_string())?;
-        storage.as_ref().ok_or("Master key not generated")?.0
-    };
-    let cipher = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(&key_data));
-
-    let mut nonce_bytes = [0u8; 12];
-    thread_rng().fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
-
-    let encrypted_data = cipher
-        .encrypt(nonce, data)
-        .map_err(|e| format!("Encryption failed: {}", e))?;
-
-    let mut payload = nonce_bytes.to_vec();
-    payload.extend_from_slice(&encrypted_data);
-    Ok(payload)
-}
-
-pub fn decrypt_local_data(payload: &[u8], key_state: SharedKey) -> Result<Vec<u8>, String> {
-    if payload.len() < 12 {
-        return Err("Payload too short".to_string());
-    }
-    let key_data = {
-        let storage = key_state.read().map_err(|e| e.to_string())?;
-        storage.as_ref().ok_or("Master key not generated")?.0
-    };
-    let cipher = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(&key_data));
-
-    let (nonce_bytes, encrypted_data) = payload.split_at(12);
-    let nonce = Nonce::from_slice(nonce_bytes);
-
-    cipher
-        .decrypt(nonce, encrypted_data)
-        .map_err(|e| format!("Decryption failed: {}", e))
 }
 
 pub fn encrypt_for_mobile(

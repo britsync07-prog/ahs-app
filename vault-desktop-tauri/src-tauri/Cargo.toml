@@ -1,13 +1,10 @@
 [package]
-name = "vault-desktop-tauri"
+name = "ahs-vault"
 version = "0.1.0"
-description = "A Tauri App"
+description = "AHS Secure Biometric Vault"
 authors = ["you"]
 edition = "2021"
-default-run = "vault-desktop-tauri"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
+default-run = "ahs-vault"
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
