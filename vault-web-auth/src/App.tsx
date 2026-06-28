@@ -16,9 +16,14 @@ import { db, type PairingData } from './lib/db';
 import * as crypto from './lib/crypto';
 import { pairDevice, sendUnlockApproval } from './services/api';
 import { useWebSocket } from './hooks/useWebSocket';
-import { useWebAuthn } from './hooks/useWebAuthn';
+import { useWebAuthn, checkWebAuthnSupport } from './hooks/useWebAuthn';
 
 type AppState = 'loading' | 'onboarding' | 'security-setup' | 'main' | 'pairing';
+
+const isIOS = () => {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+};
 
 function App() {
   const [state, setState] = useState<AppState>('loading');
@@ -26,6 +31,12 @@ function App() {
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [identityPK, setIdentityPK] = useState<string | null>(null);
   const [pairingData, setPairingData] = useState<PairingData | null>(null);
+
+  // Cached biometric state
+  const [webAuthnSupported, setWebAuthnSupported] = useState<boolean>(false);
+  const [biometricsEnabledState, setBiometricsEnabledState] = useState<boolean>(false);
+  const [biometricCredentialIdState, setBiometricCredentialIdState] = useState<string | null>(null);
+  const [showPostPairingModal, setShowPostPairingModal] = useState<boolean>(false);
   
   // App Lock State (Mirrors 'isAppLocked' in native)
   const [isAppLocked, setIsAppLocked] = useState(false); // Default false, only set true after init finds PIN
@@ -63,11 +74,14 @@ function App() {
       try {
         await db.robustOpen();
         
-        const [pk, pin, salt, pd] = await Promise.all([
+        const [pk, pin, salt, pd, support, bioEnabled, bioCredId] = await Promise.all([
           db.getIdentityPublicKey(),
           db.getPinHash(),
           db.getPinSalt(),
-          db.getPairingData()
+          db.getPairingData(),
+          checkWebAuthnSupport(),
+          db.isBiometricsEnabled(),
+          db.getBiometricCredentialId()
         ]);
         
         console.log('[DEBUG] Security State Check:', { 
@@ -79,6 +93,9 @@ function App() {
 
         setIdentityPK(pk);
         setPairingData(pd);
+        setWebAuthnSupported(support.supported);
+        setBiometricsEnabledState(bioEnabled);
+        setBiometricCredentialIdState(bioCredId);
 
         if (!pk) {
           setState('onboarding');
@@ -161,10 +178,14 @@ function App() {
     async function handleMessage() {
       // 1. WAKE_UP_BIOMETRIC: Remote trigger for biometric approval (Magic Unlock)
       if (lastMessage === 'WAKE_UP_BIOMETRIC' && pairingData) {
-        setBiometricPending(true);
-        // NATIVE MIRROR: On web, we CANNOT trigger biometric immediately from a socket message 
-        // as it requires a direct user gesture. We show the prompt and wait for user click.
-        console.log('Magic Unlock requested. Waiting for user gesture...');
+        if (!webAuthnSupported || !biometricsEnabledState || !biometricCredentialIdState) {
+          console.log('[DEBUG] Biometrics unsupported/disabled. Showing PIN fallback directly.');
+          setShowPinFallback(true);
+          setBiometricPending(false);
+        } else {
+          setBiometricPending(true);
+          console.log('Magic Unlock requested. Waiting for user gesture...');
+        }
         return;
       }
 
@@ -194,7 +215,7 @@ function App() {
     }
 
     handleMessage();
-  }, [lastMessage, pairingData]);
+  }, [lastMessage, pairingData, webAuthnSupported, biometricsEnabledState, biometricCredentialIdState]);
 
   const handleOnboardingNext = async () => {
     if (onboardingStep < 2) {
@@ -242,6 +263,9 @@ function App() {
       await db.setBiometricCredentialId(biometricData.id);
       await db.setBiometricPublicKey(biometricData.publicKey);
       await db.setBiometricsEnabled(true);
+      
+      setBiometricsEnabledState(true);
+      setBiometricCredentialIdState(biometricData.id);
       console.log('[DEBUG] Biometric settings saved with ID:', biometricData.id);
 
       // Notify backend of the new hardware key link (Mirrors native binding)
@@ -297,6 +321,97 @@ function App() {
     }
   };
 
+  const handleSecuritySetupSkipBiometric = async () => {
+    setIsProcessing(true);
+    console.log('[DEBUG] Skipping biometric enrollment, setting up PIN-only...');
+    try {
+      if (!tempPin) {
+        console.error('[DEBUG] tempPin is missing during PIN-only setup');
+        throw new Error('PIN setup missing. Please restart setup.');
+      }
+
+      console.log('[DEBUG] Disabling biometrics in DB...');
+      await db.setBiometricCredentialId('');
+      await db.setBiometricPublicKey('');
+      await db.setBiometricsEnabled(false);
+      
+      setBiometricsEnabledState(false);
+      setBiometricCredentialIdState(null);
+
+      // Save PIN Hash using Salt + SHA-256 (Native Mirror)
+      console.log('[DEBUG] Calculating and saving PIN hash...');
+      const salt = crypto.generateRandomSalt();
+      const saltB64 = crypto.uint8ArrayToBase64(salt);
+      const pinHash = await crypto.hashPin(tempPin, salt);
+      
+      await db.savePinHash(pinHash, saltB64);
+      
+      if (tempDecoyPin) {
+        console.log('[DEBUG] Saving decoy PIN hash...');
+        const decoyHash = await crypto.hashPin(tempDecoyPin, salt);
+        await db.saveDecoyPinHash(decoyHash);
+      }
+
+      console.log('[DEBUG] PIN hash and salt saved. Verifying persistence...');
+
+      // INDUSTRY STANDARD: Read-Back Verification
+      const [vHash, vSalt] = await Promise.all([
+        db.getPinHash(), 
+        db.getPinSalt(),
+      ]);
+      
+      if (!vHash || !vSalt) {
+        throw new Error('Device Storage Failure: Security data not found after save.');
+      }
+
+      console.log('[DEBUG] Persistence verified. Moving to main state.');
+      setState('main');
+      setIsAppLocked(false);
+      
+      alert('Security Setup Complete (PIN Only)!');
+    } catch (err: any) {
+      console.error('[DEBUG] PIN-only security setup failed', err);
+      alert(`Security setup failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleEnrollBiometricsPostPairing = async () => {
+    setIsProcessing(true);
+    try {
+      const biometricData = await registerBiometric('User');
+      if (biometricData) {
+        await db.setBiometricCredentialId(biometricData.id);
+        await db.setBiometricPublicKey(biometricData.publicKey);
+        await db.setBiometricsEnabled(true);
+        
+        setBiometricsEnabledState(true);
+        setBiometricCredentialIdState(biometricData.id);
+
+        const pd = pairingData || await db.getPairingData();
+        if (identityPK && pd) {
+          await fetch(`${pd.backend_url}/api/web/register-webauthn`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mobile_public_key: identityPK,
+              webauthn_id: biometricData.id,
+              webauthn_pubkey: biometricData.publicKey,
+            }),
+          });
+        }
+        alert('Biometrics successfully registered!');
+        setShowPostPairingModal(false);
+      }
+    } catch (err: any) {
+      console.error('Biometric enrollment failed:', err);
+      alert(`Enrollment failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleScan = async (decodedText: string) => {
     console.log('Scanner detected text:', decodedText);
     setState('main');
@@ -320,21 +435,6 @@ function App() {
         throw new Error('Local security identity not found. Please regenerate identity in Settings.');
       }
 
-      // NATIVE MIRROR: Ask for FaceID/Fingerprint DURING pairing scan
-      console.log('Requesting biometric enrollment during pairing...');
-      let biometricData;
-      try {
-        biometricData = await registerBiometric('User');
-        if (biometricData) {
-          await db.setBiometricCredentialId(biometricData.id);
-          await db.setBiometricPublicKey(biometricData.publicKey);
-          await db.setBiometricsEnabled(true);
-          console.log('Biometric registration successful during pairing.');
-        }
-      } catch (bioErr) {
-        console.warn('Biometric enrollment skipped during pairing, continuing with identity key only.', bioErr);
-      }
-
       console.log('Signing pairing request...');
       const signature = await crypto.signData(identityPriv, pairing_nonce);
       
@@ -346,8 +446,8 @@ function App() {
         crypto.uint8ArrayToBase64(crypto.x25519.getPublicKey(crypto.base64ToUint8Array(xPriv))),
         pairing_nonce,
         signature,
-        biometricData?.id,
-        biometricData?.publicKey
+        undefined, // Avoid automatically sending biometric credential info
+        undefined
       );
 
       console.log('Pairing successful result:', result);
@@ -369,6 +469,11 @@ function App() {
         await db.saveMasterKey(masterKey);
         console.log('Master key saved.');
       }
+
+      // Trigger post-pairing screen/modal for enrollment
+      if (webAuthnSupported) {
+        setShowPostPairingModal(true);
+      }
     } catch (err: any) {
       console.error('Pairing failed:', err);
       alert(`Pairing failed: ${err.message || 'Unknown error'}\n\nCheck if your backend is accessible at the URL shown in the logs.`);
@@ -378,15 +483,19 @@ function App() {
   };
 
   const handleAppLockUnlock = async () => {
-    const biometricsReady = await db.isBiometricsEnabled();
-    const credentialId = await db.getBiometricCredentialId();
-    const pairingData = await db.getPairingData();
+    // Check React state synchronously
+    const biometricsReady = biometricsEnabledState;
+    const credentialId = biometricCredentialIdState;
     
-    console.log('[DEBUG] Unlock check:', { biometricsReady, hasCredential: !!credentialId });
+    console.log('[DEBUG] Unlock check (cached state):', { biometricsReady, hasCredential: !!credentialId });
 
     // NATIVE MIRROR: If biometrics aren't ready, we don't even try - go straight to PIN.
-    if (!biometricsReady || !credentialId || !pairingData) {
-      const reason = !biometricsReady ? 'Biometrics disabled' : (!pairingData ? 'Not paired' : 'Credential missing');
+    if (!webAuthnSupported || !biometricsReady || !credentialId || !pairingData) {
+      const reason = !webAuthnSupported 
+        ? 'WebAuthn unsupported' 
+        : (!biometricsReady 
+          ? 'Biometrics disabled' 
+          : (!pairingData ? 'Not paired' : 'Credential missing'));
       console.log(`[DEBUG] Biometrics not enrolled (${reason}). Switching to PIN pad.`);
       setBiometricStatus(`Biometrics Unavailable: ${reason}`);
       setShowPinFallback(true);
@@ -457,20 +566,21 @@ function App() {
   const handleApproveUnlock = async () => {
     if (!pairingData || !identityPK) return;
     
-    const biometricsReady = await db.isBiometricsEnabled();
-    const credentialId = await db.getBiometricCredentialId();
+    // Check React state synchronously
+    const biometricsReady = biometricsEnabledState;
+    const credentialId = biometricCredentialIdState;
 
-    console.log('[DEBUG] Approve Unlock check:', { biometricsReady, hasCredential: !!credentialId });
+    console.log('[DEBUG] Approve Unlock check (cached state):', { biometricsReady, hasCredential: !!credentialId });
 
-    if (!biometricsReady || !credentialId) {
-      console.log('[DEBUG] Biometrics not enrolled, jumping directly to PIN fallback.');
+    if (!webAuthnSupported || !biometricsReady || !credentialId) {
+      console.log('[DEBUG] Biometrics not enrolled or unsupported, jumping directly to PIN fallback.');
       setShowPinFallback(true);
       return;
     }
 
     setIsProcessing(true);
     try {
-      console.log('[DEBUG] Triggering biometric for approval...');
+      console.log('[DEBUG] Triggering biometric for approval synchronously...');
       const webauthnResp = await authenticateBiometric(credentialId, pairingData.pairing_nonce);
       
       // SUCCESS: Call finishUnlockApproval and EXIT.
@@ -488,6 +598,7 @@ function App() {
         console.error('[DEBUG] Biometric error:', err);
         // If it's a real hardware error, still fallback to PIN.
         setShowPinFallback(true);
+        setBiometricPending(false);
       }
     } finally {
       setIsProcessing(false);
@@ -638,6 +749,7 @@ function App() {
       );
     }
 
+    const ios = isIOS();
     return (
       <div className="min-h-screen bg-background text-text-primary flex flex-col p-8 font-sans animate-in fade-in duration-500">
         <div className="flex-1 flex flex-col items-center justify-center space-y-12">
@@ -647,8 +759,14 @@ function App() {
               <Fingerprint size={100} className="relative text-neon-cyan animate-pulse" />
             </div>
             <div className="space-y-4">
-              <h1 className="text-4xl font-black tracking-tight uppercase">Biometrics.</h1>
-              <p className="text-text-secondary text-lg max-w-xs mx-auto">Enable hardware-backed biometric authentication.</p>
+              <h1 className="text-4xl font-black tracking-tight uppercase">
+                {ios ? 'Face ID.' : 'Biometrics.'}
+              </h1>
+              <p className="text-text-secondary text-lg max-w-xs mx-auto">
+                {ios 
+                  ? 'Enable Face ID to secure your vault and authenticate lock requests.'
+                  : 'Enable hardware-backed biometric authentication.'}
+              </p>
             </div>
           </div>
         </div>
@@ -657,9 +775,17 @@ function App() {
           <button 
             onClick={handleSecuritySetupBiometric}
             disabled={isProcessing}
-            className="w-full bg-neon-cyan text-black h-16 rounded-3xl font-black text-lg shadow-neon-glow active:scale-95 transition-all flex items-center justify-center space-x-2"
+            className="w-full bg-neon-cyan text-black h-16 rounded-3xl font-black text-lg shadow-neon-glow active:scale-95 transition-all flex items-center justify-center space-x-2 cursor-pointer"
           >
-            {isProcessing ? <RefreshCw className="animate-spin" /> : <span>Complete Setup</span>}
+            {isProcessing ? <RefreshCw className="animate-spin" /> : <span>{ios ? 'Enroll Face ID' : 'Complete Setup'}</span>}
+          </button>
+
+          <button
+            onClick={handleSecuritySetupSkipBiometric}
+            disabled={isProcessing}
+            className="w-full py-4 text-text-secondary font-bold text-sm uppercase tracking-widest hover:text-text-primary active:scale-[0.98] transition-all cursor-pointer"
+          >
+            Skip / PIN Only
           </button>
         </div>
       </div>
@@ -758,6 +884,13 @@ function App() {
           <SettingsScreen 
             isDarkTheme={isDarkTheme}
             onThemeToggle={() => setIsDarkTheme(!isDarkTheme)}
+            biometricsEnabled={biometricsEnabledState}
+            onBiometricsChange={async () => {
+              const enabled = await db.isBiometricsEnabled();
+              const credId = await db.getBiometricCredentialId();
+              setBiometricsEnabledState(enabled);
+              setBiometricCredentialIdState(credId);
+            }}
           />
         )}
         {activeTab === 'devices' && (
@@ -816,6 +949,49 @@ function App() {
               <RefreshCw className="text-neon-cyan animate-spin relative" size={40} />
             </div>
             <p className="text-sm font-black tracking-[0.2em] uppercase text-text-secondary">Securing...</p>
+          </div>
+        </div>
+      )}
+
+      {showPostPairingModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-md">
+          <div className="glass border border-border-subtle p-8 rounded-[40px] max-w-sm w-full mx-4 flex flex-col items-center space-y-6 text-center shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="relative">
+              <div className="absolute inset-0 bg-neon-cyan/20 rounded-full blur-xl animate-pulse" />
+              <div className="w-16 h-16 rounded-2xl bg-text-secondary/5 border border-border-subtle flex items-center justify-center text-neon-cyan relative">
+                <Fingerprint size={32} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-black uppercase tracking-tight text-text-primary">
+                {isIOS() ? 'Enable Face ID' : 'Enable Biometrics'}
+              </h2>
+              <p className="text-xs text-text-secondary">
+                {isIOS()
+                  ? 'Secure your vault with Face ID for faster, touchless unlocking of your workstation.'
+                  : 'Secure your vault with TouchID/FaceID for faster, touchless unlocking of your workstation.'}
+              </p>
+            </div>
+            <div className="flex flex-col w-full gap-3 pt-2">
+              <button
+                onClick={handleEnrollBiometricsPostPairing}
+                disabled={isProcessing}
+                className="w-full py-4 bg-neon-cyan text-black rounded-full font-black uppercase tracking-widest shadow-neon-glow active:scale-95 transition-all text-xs cursor-pointer"
+              >
+                {isProcessing ? (
+                  <RefreshCw className="animate-spin mx-auto" size={16} />
+                ) : (
+                  <span>{isIOS() ? 'Enroll Face ID' : 'Enroll Now'}</span>
+                )}
+              </button>
+              <button
+                onClick={() => setShowPostPairingModal(false)}
+                disabled={isProcessing}
+                className="w-full py-3 text-text-secondary font-bold text-[10px] uppercase tracking-[0.2em] hover:text-text-primary transition-colors cursor-pointer"
+              >
+                Skip / PIN Only
+              </button>
+            </div>
           </div>
         </div>
       )}

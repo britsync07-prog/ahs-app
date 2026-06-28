@@ -8,7 +8,14 @@ interface BiometricPromptProps {
   loading: boolean;
 }
 
+const isIOS = () => {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+};
+
 export const BiometricPrompt: React.FC<BiometricPromptProps> = ({ onApprove, onDeny, onPinFallback, loading }) => {
+  const ios = isIOS();
+
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center px-6">
       {/* Cinematic backdrop */}
@@ -20,7 +27,7 @@ export const BiometricPrompt: React.FC<BiometricPromptProps> = ({ onApprove, onD
       <div className="relative w-full max-w-sm glass rounded-[40px] p-8 shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col items-center">
         <button 
           onClick={onDeny}
-          className="absolute top-6 right-6 p-2 text-text-secondary hover:text-text-primary transition-colors"
+          className="absolute top-6 right-6 p-2 text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
         >
           <X size={20} />
         </button>
@@ -38,28 +45,32 @@ export const BiometricPrompt: React.FC<BiometricPromptProps> = ({ onApprove, onD
           </div>
         </div>
 
-        <h2 className="text-2xl font-bold text-center mb-2 text-text-primary uppercase tracking-tight">Identity</h2>
+        <h2 className="text-2xl font-bold text-center mb-2 text-text-primary uppercase tracking-tight">
+          {ios ? 'Scan Face ID' : 'Identity'}
+        </h2>
         <p className="text-text-secondary text-center mb-8 text-sm px-4">
-          Verification required to authorize this request.
+          {ios 
+            ? 'Scan Face ID to authorize this request. Fall back to your Security PIN if Face ID is unavailable.' 
+            : 'Verification required to authorize this request.'}
         </p>
 
         <div className="w-full flex flex-col gap-3">
           <button
             onClick={onApprove}
             disabled={loading}
-            className="w-full h-16 bg-neon-cyan text-black rounded-2xl font-black uppercase tracking-widest text-sm active:scale-95 transition-all flex items-center justify-center space-x-2 shadow-neon-glow"
+            className="w-full h-16 bg-neon-cyan text-black rounded-2xl font-black uppercase tracking-widest text-sm active:scale-95 transition-all flex items-center justify-center space-x-2 shadow-neon-glow cursor-pointer"
           >
             {loading ? (
               <div className="w-6 h-6 border-2 border-black/30 border-t-black rounded-full animate-spin" />
             ) : (
-              <span>Verify Identity</span>
+              <span>{ios ? 'Scan Face ID' : 'Verify Identity'}</span>
             )}
           </button>
           
           {onPinFallback && (
             <button
               onClick={onPinFallback}
-              className="w-full h-14 bg-text-secondary/10 text-text-primary rounded-2xl font-bold text-xs uppercase tracking-[0.2em] active:scale-95 transition-all"
+              className="w-full h-14 bg-text-secondary/10 text-text-primary rounded-2xl font-bold text-xs uppercase tracking-[0.2em] active:scale-95 transition-all cursor-pointer"
             >
               Use Security PIN
             </button>
@@ -68,7 +79,7 @@ export const BiometricPrompt: React.FC<BiometricPromptProps> = ({ onApprove, onD
         
         <button
           onClick={onDeny}
-          className="mt-6 text-text-secondary text-[10px] font-black uppercase tracking-widest hover:text-text-primary transition-colors"
+          className="mt-6 text-text-secondary text-[10px] font-black uppercase tracking-widest hover:text-text-primary transition-colors cursor-pointer"
         >
           Cancel Request
         </button>
@@ -76,3 +87,4 @@ export const BiometricPrompt: React.FC<BiometricPromptProps> = ({ onApprove, onD
     </div>
   );
 };
+

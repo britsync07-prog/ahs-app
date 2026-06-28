@@ -358,35 +358,53 @@ func (h *Handler) UploadVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read body for signature verification
-	bodyBytes, err := io.ReadAll(r.Body)
+	// Create temp file for disk-based processing (offloads RAM to storage)
+	tempFile, err := os.CreateTemp("", "upload-*")
 	if err != nil {
+		log.Printf("Failed to create temp file: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer os.Remove(tempFile.Name())
+	defer tempFile.Close()
+
+	// Hash while streaming
+	hasher := sha256.New()
+	tee := io.TeeReader(r.Body, hasher)
+
+	// Stream to disk
+	size, err := io.Copy(tempFile, tee)
+	if err != nil {
+		log.Printf("Failed to stream upload to disk: %v", err)
 		http.Error(w, "Failed to read body", http.StatusBadRequest)
 		return
 	}
 
-	if err := h.verifyDesktopSignature(desktopPK, bodyBytes, signature); err != nil {
-		// FALLBACK: Rust client might be sending SHA256 pre-hashed body
-		hash := sha256.Sum256(bodyBytes)
-		if err := h.verifyDesktopSignature(desktopPK, hash[:], signature); err != nil {
-			log.Printf("Desktop authentication failed: %v", err)
-			http.Error(w, "Invalid desktop signature", http.StatusUnauthorized)
-			return
-		}
-	}
-
-	// 1. Get size
-	size := int64(len(bodyBytes))
 	if size <= 0 {
 		http.Error(w, "Content required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify signature using the SHA-256 hash
+	hashBytes := hasher.Sum(nil)
+	if err := h.verifyDesktopSignature(desktopPK, hashBytes, signature); err != nil {
+		log.Printf("Desktop authentication failed (streaming): %v", err)
+		http.Error(w, "Invalid desktop signature", http.StatusUnauthorized)
+		return
+	}
+
+	// Reset file pointer for storage upload
+	if _, err := tempFile.Seek(0, 0); err != nil {
+		log.Printf("Failed to seek temp file: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	// 2. Generate a unique UUID
 	blobID := uuid.New().String()
 
-	// 3. Save to GDrive
-	_, err = h.storage.UploadObject(r.Context(), googleToken, blobID, bytes.NewReader(bodyBytes))
+	// 3. Save to GDrive (streaming from temp file)
+	_, err = h.storage.UploadObject(r.Context(), googleToken, blobID, tempFile)
 	if err != nil {
 		log.Printf("Upload failed: %v", err)
 		http.Error(w, "Failed to save blob to GDrive storage", http.StatusInternalServerError)
