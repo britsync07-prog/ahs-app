@@ -95,6 +95,8 @@ class VaultDexie extends Dexie {
   async saveXPrivateKey(priv: string) { await this.saveSetting('x_private_key', priv); }
   async saveMasterKey(key: string) { await this.saveSetting('master_key', key); }
   async savePairingData(data: PairingData) { await this.saveSetting('pairing_data', data); }
+  async getMnemonic() { return this.getSetting<string>('mnemonic'); }
+  async saveMnemonic(mnemonic: string) { await this.saveSetting('mnemonic', mnemonic); }
 
   async clearAll() { 
     await this.robustOpen();
