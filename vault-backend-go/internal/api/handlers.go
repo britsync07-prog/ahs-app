@@ -145,28 +145,15 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	var exeUrl, sigUrl string
 	for _, asset := range release.Assets {
-		if strings.HasSuffix(asset.Name, "-setup.exe") {
+		if strings.HasSuffix(asset.Name, "_x64-setup.exe") || strings.HasSuffix(asset.Name, "-setup.exe") {
 			exeUrl = asset.BrowserDownloadUrl
-		} else if strings.HasSuffix(asset.Name, "-setup.exe.sig") {
+		} else if strings.HasSuffix(asset.Name, "_x64-setup.exe.sig") || strings.HasSuffix(asset.Name, "-setup.exe.sig") {
 			sigUrl = asset.BrowserDownloadUrl
 		}
 	}
 
 	if exeUrl == "" || sigUrl == "" {
-		// Fallback for debugging if release is not fully published yet
-		updateResponse := map[string]interface{}{
-			"version":  "v0.1.2",
-			"notes":    "Release pending...",
-			"pub_date": time.Now().Format(time.RFC3339),
-			"platforms": map[string]interface{}{
-				"windows-x86_64": map[string]interface{}{
-					"signature": "",
-					"url":       "",
-				},
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(updateResponse)
+		http.Error(w, "Latest release does not include Windows updater assets", http.StatusNotFound)
 		return
 	}
 
