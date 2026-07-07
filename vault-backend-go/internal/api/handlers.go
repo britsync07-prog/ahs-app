@@ -1,7 +1,7 @@
 package api
 
 import (
-	"bytes"
+
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -121,16 +121,77 @@ func (h *Handler) GetActivity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
-	// In a real production app, you might query GitHub API to get the latest release.
-	// For now, we return a structured JSON that Tauri expects.
+	// Query GitHub API to get the latest release
+	resp, err := http.Get("https://api.github.com/repos/britsync07-prog/ahs-app/releases/latest")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		http.Error(w, "Failed to fetch latest release", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	var release struct {
+		TagName     string `json:"tag_name"`
+		PublishedAt string `json:"published_at"`
+		Body        string `json:"body"`
+		Assets      []struct {
+			Name               string `json:"name"`
+			BrowserDownloadUrl string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		http.Error(w, "Failed to parse release data", http.StatusInternalServerError)
+		return
+	}
+
+	var zipUrl, sigUrl string
+	for _, asset := range release.Assets {
+		if strings.HasSuffix(asset.Name, ".zip") {
+			zipUrl = asset.BrowserDownloadUrl
+		} else if strings.HasSuffix(asset.Name, ".sig") {
+			sigUrl = asset.BrowserDownloadUrl
+		}
+	}
+
+	if zipUrl == "" || sigUrl == "" {
+		// Fallback for debugging if release is not fully published yet
+		updateResponse := map[string]interface{}{
+			"version":  "v0.1.2",
+			"notes":    "Release pending...",
+			"pub_date": time.Now().Format(time.RFC3339),
+			"platforms": map[string]interface{}{
+				"windows-x86_64": map[string]interface{}{
+					"signature": "",
+					"url":       "",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(updateResponse)
+		return
+	}
+
+	// Fetch the signature content
+	sigResp, err := http.Get(sigUrl)
+	if err != nil || sigResp.StatusCode != http.StatusOK {
+		http.Error(w, "Failed to fetch signature", http.StatusInternalServerError)
+		return
+	}
+	defer sigResp.Body.Close()
+	
+	sigBytes, err := io.ReadAll(sigResp.Body)
+	if err != nil {
+		http.Error(w, "Failed to read signature", http.StatusInternalServerError)
+		return
+	}
+
 	updateResponse := map[string]interface{}{
-		"version":  "v0.1.1", // Change this when you release a new version
-		"notes":    "Stabilized WebSocket connections and fixed redundant imports.",
-		"pub_date": "2026-05-21T12:00:00Z",
+		"version":  strings.TrimPrefix(release.TagName, "v"), // Tauri expects version without 'v' usually, though "v0.1.2" might work
+		"notes":    release.Body,
+		"pub_date": release.PublishedAt,
 		"platforms": map[string]interface{}{
 			"windows-x86_64": map[string]interface{}{
-				"signature": "", // You will get this from the build artifact (.sig file)
-				"url":       "https://github.com/britsync07-prog/ahs-app/releases/latest/download/vault-desktop-tauri.msi.zip",
+				"signature": strings.TrimSpace(string(sigBytes)),
+				"url":       zipUrl,
 			},
 		},
 	}
