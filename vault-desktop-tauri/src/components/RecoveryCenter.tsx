@@ -13,9 +13,6 @@ export const RecoveryCenter: React.FC<RecoveryCenterProps> = ({ onRevealMasterKe
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [stats, setStats] = React.useState<any>(null);
   const [copied, setCopied] = React.useState(false);
-  const [isPurging, setIsPurging] = React.useState(false);
-  const [purgeResult, setPurgeResult] = React.useState<string | null>(null);
-  const [showPurgeConfirm, setShowPurgeConfirm] = React.useState(false);
   const [backupSettings, setBackupSettings] = React.useState(() => {
     const saved = localStorage.getItem('vault_backup_settings');
     return saved ? JSON.parse(saved) : {
@@ -205,107 +202,7 @@ export const RecoveryCenter: React.FC<RecoveryCenterProps> = ({ onRevealMasterKe
             </button>
           </div>
         </div>
-
-        {/* Orphaned Blobs Section */}
-        <div className="col-span-12 space-y-4 mt-4">
-          <h3 className="text-xs font-bold uppercase tracking-widest text-text-tertiary px-2">Cloud Storage Maintenance</h3>
-          <div className="p-6 rounded-3xl bg-rose-500/5 border border-rose-500/10">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-3 rounded-xl bg-rose-500/10 text-rose-500">
-                <Database className="w-5 h-5" />
-              </div>
-              <div>
-                <h4 className="text-sm font-bold text-text-primary">Purge Orphaned Cloud Blobs</h4>
-                <p className="text-[10px] text-text-tertiary">Remove unreferenced files from Google Drive</p>
-              </div>
-            </div>
-            <p className="text-xs text-text-secondary mb-5 leading-relaxed">
-              Over time, deleted files may leave behind orphaned encrypted blobs in your cloud storage.
-              This scans Google Drive for blobs not referenced by any vault index and removes them.
-            </p>
-            {purgeResult && (
-              <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-500 font-medium">
-                {purgeResult}
-              </div>
-            )}
-            <button
-              onClick={() => setShowPurgeConfirm(true)}
-              disabled={isPurging}
-              className="w-full py-4 rounded-xl bg-rose-600 text-pure font-bold text-sm shadow-[0_0_20px_rgba(225,29,72,0.2)] flex items-center justify-center gap-3 disabled:opacity-50 transition-all hover:scale-[1.01] active:scale-[0.98]"
-            >
-              {isPurging ? (
-                <div className="w-5 h-5 border-2 border-pure border-t-transparent rounded-full animate-spin"></div>
-              ) : (
-                <Trash2 className="w-5 h-5" />
-              )}
-              {isPurging ? "Purging..." : "Scan & Purge Orphaned Blobs"}
-            </button>
-          </div>
-        </div>
       </div>
-
-      {/* Purge Confirmation Modal */}
-      <AnimatePresence>
-        {showPurgeConfirm && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-md flex items-center justify-center p-8"
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="max-w-md w-full bg-matte rounded-3xl border border-rose-500/20 p-8 shadow-2xl"
-            >
-              <div className="flex items-center gap-3 mb-6">
-                <div className="p-2 rounded-xl bg-rose-500/10">
-                  <ShieldAlert className="w-5 h-5 text-rose-500" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-text-primary">Confirm Purge</h3>
-                  <p className="text-[10px] text-text-tertiary">This action cannot be undone</p>
-                </div>
-              </div>
-
-              <p className="text-xs text-text-secondary mb-6 leading-relaxed">
-                This will scan Google Drive for encrypted blobs not referenced by your vault index
-                and permanently delete them. Only blobs with no matching local or backend reference
-                will be removed. Your active files are safe.
-              </p>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={async () => {
-                    setIsPurging(true);
-                    setShowPurgeConfirm(false);
-                    setPurgeResult(null);
-                    try {
-                      const result = await invoke<string>("cleanup_orphaned_blobs");
-                      setPurgeResult(result);
-                    } catch (e) {
-                      setPurgeResult(`Error: ${e}`);
-                    } finally {
-                      setIsPurging(false);
-                    }
-                  }}
-                  className="flex-1 py-4 rounded-xl bg-rose-600 text-pure font-bold text-sm flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.98]"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Yes, Purge Orphans
-                </button>
-                <button
-                  onClick={() => setShowPurgeConfirm(false)}
-                  className="px-8 py-4 rounded-xl bg-white/5 border border-white/10 text-text-secondary font-bold text-sm hover:bg-white/10 transition-all"
-                >
-                  Cancel
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Master Key Reveal Modal */}
       <AnimatePresence>
