@@ -448,11 +448,6 @@ impl TransferGuard {
 impl Drop for TransferGuard {
     fn drop(&mut self) {
         ACTIVE_TRANSFERS.fetch_sub(1, Ordering::SeqCst);
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        LAST_ACTIVITY.store(now, Ordering::SeqCst);
     }
 }
 
@@ -506,13 +501,8 @@ fn start_inactivity_watcher(app: AppHandle, public_key_b64: String) {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
 
-        // If any file transfer is in progress, skip auto-lock and reset timer
+        // If any file transfer is in progress, skip auto-lock
         if ACTIVE_TRANSFERS.load(Ordering::SeqCst) > 0 {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            LAST_ACTIVITY.store(now, Ordering::SeqCst);
             continue;
         }
 
