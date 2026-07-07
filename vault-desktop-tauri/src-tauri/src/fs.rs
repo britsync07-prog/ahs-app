@@ -1912,13 +1912,18 @@ pub fn start_cloud_reconciliation(
 ) {
     std::thread::spawn(move || {
         // Initial delay to allow restoration/mount to settle
-        println!("VaultFS: Cloud reconciliation will start in 10 minutes...");
-        std::thread::sleep(std::time::Duration::from_secs(600));
+        println!("VaultFS: Cloud reconciliation will start in 30 seconds...");
+        std::thread::sleep(std::time::Duration::from_secs(30));
         
-        println!("VaultFS: Starting background cloud storage reconciliation...");
-        match perform_cloud_reconciliation(&config_path, &files_arc) {
-            Ok(_) => println!("VaultFS: Cloud storage reconciliation completed successfully."),
-            Err(e) => eprintln!("VaultFS: Cloud reconciliation failed: {}", e),
+        loop {
+            println!("VaultFS: Starting background cloud storage reconciliation...");
+            match perform_cloud_reconciliation(&config_path, &files_arc) {
+                Ok(_) => println!("VaultFS: Cloud storage reconciliation completed successfully."),
+                Err(e) => eprintln!("VaultFS: Cloud reconciliation failed: {}", e),
+            }
+            
+            // Sleep for 1 hour before the next background check
+            std::thread::sleep(std::time::Duration::from_secs(3600));
         }
     });
 }
