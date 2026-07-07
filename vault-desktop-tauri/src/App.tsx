@@ -23,6 +23,8 @@ function App() {
   const [isRestoring, setIsRestoring] = useState(false);
   const [googleConnected, setGoogleConnected] = useState<boolean>(false);
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
+  const [revealedMnemonic, setRevealedMnemonic] = useState<string | null>(null);
+  const [isRevealing, setIsRevealing] = useState(false);
 
   const handleRestoreVault = async (phrase: string) => {
     setIsRestoring(true);
@@ -146,6 +148,20 @@ function App() {
     }
   };
 
+  const handleRevealMasterKey = async () => {
+    setIsRevealing(true);
+    try {
+      await invoke("request_master_key_reveal");
+    } catch (e) {
+      console.error("Reveal master key push failed:", e);
+      setIsRevealing(false);
+    }
+  };
+
+  const handleClearRevealedMnemonic = () => {
+    setRevealedMnemonic(null);
+  };
+
   useEffect(() => {
     // 1. Check Onboarding Status
     invoke<boolean>("check_onboarding").then((status) => {
@@ -174,10 +190,17 @@ function App() {
       setUnlocked(false);
     });
 
+    const unlistenMasterKeyRevealed = listen<string>("master-key-revealed", (event) => {
+      console.log("Event: master-key-revealed received");
+      setRevealedMnemonic(event.payload);
+      setIsRevealing(false);
+    });
+
     return () => {
       unlistenPairing.then((f) => f());
       unlistenMount.then((f) => f());
       unlistenAutoLock.then((f) => f());
+      unlistenMasterKeyRevealed.then((f) => f());
     };
   }, []);
 
@@ -391,7 +414,15 @@ function App() {
             animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
             transition={{ duration: 0.8, ease: "easeOut" }}
           >
-            <Dashboard onLock={handleLock} theme={theme} onToggleTheme={toggleTheme} />
+            <Dashboard
+              onLock={handleLock}
+              theme={theme}
+              onToggleTheme={toggleTheme}
+              onRevealMasterKey={handleRevealMasterKey}
+              revealedMnemonic={revealedMnemonic}
+              onClearRevealedMnemonic={handleClearRevealedMnemonic}
+              isRevealing={isRevealing}
+            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -408,6 +439,23 @@ function App() {
             <div className="flex flex-col items-center gap-4">
               <div className="w-12 h-12 border-2 border-cyan border-t-transparent rounded-full animate-spin"></div>
               <p className="text-xs font-bold tracking-[0.2em] uppercase text-cyan">Initializing Storage Environment</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Reveal Master Key overlay */}
+      <AnimatePresence>
+        {isRevealing && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-pure/60 backdrop-blur-sm flex items-center justify-center"
+          >
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-12 h-12 border-2 border-cyan border-t-transparent rounded-full animate-spin"></div>
+              <p className="text-xs font-bold tracking-[0.2em] uppercase text-cyan">Check your phone to approve...</p>
             </div>
           </motion.div>
         )}

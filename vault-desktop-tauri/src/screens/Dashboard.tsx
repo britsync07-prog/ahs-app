@@ -13,11 +13,15 @@ interface DashboardProps {
   onLock: () => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
+  onRevealMasterKey: () => void;
+  revealedMnemonic: string | null;
+  onClearRevealedMnemonic: () => void;
+  isRevealing: boolean;
 }
 
 type TabType = 'dashboard' | 'vault' | 'shield' | 'devices' | 'recovery' | 'settings';
 
-export const Dashboard: React.FC<DashboardProps> = ({ onLock, theme, onToggleTheme }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ onLock, theme, onToggleTheme, onRevealMasterKey, revealedMnemonic, onClearRevealedMnemonic }) => {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [stats, setStats] = useState({
     filesProtected: 0,
@@ -245,7 +249,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLock, theme, onToggleThe
 
           {activeTab === 'vault' && <VaultExplorer />}
           {activeTab === 'shield' && <SecurityCenter />}
-          {activeTab === 'recovery' && <RecoveryCenter />}
+          {activeTab === 'recovery' && (
+            <RecoveryCenter
+              onRevealMasterKey={onRevealMasterKey}
+              revealedMnemonic={revealedMnemonic}
+              onClearRevealedMnemonic={onClearRevealedMnemonic}
+            />
+          )}
           
           {activeTab === 'settings' && (
             <div className="max-w-4xl space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-700 pb-20">

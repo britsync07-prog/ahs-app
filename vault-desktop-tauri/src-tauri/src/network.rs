@@ -1,6 +1,7 @@
 use crate::SharedKey;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
@@ -63,33 +64,48 @@ pub async fn connect_and_register(
                     continue;
                 }
 
+                // 3. Client-side keepalive ping every 15s to prevent server idle disconnect
+                let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(15));
+                let _ = ping_interval.tick().await; // skip immediate first tick
+
                 // 2. Listen for messages
-                while let Some(msg) = read.next().await {
-                    match msg {
-                        Ok(Message::Text(text)) => {
-                            println!("Ws: Received raw text: {}", text);
-                            match serde_json::from_str::<WsMessage>(&text) {
-                                Ok(ws_msg) => {
-                                    handle_server_message(&app, ws_msg, is_onboarded, &x_secret).await;
+                loop {
+                    tokio::select! {
+                        msg = read.next() => {
+                            match msg {
+                                Some(Ok(Message::Text(text))) => {
+                                    println!("Ws: Received raw text: {}", text);
+                                    match serde_json::from_str::<WsMessage>(&text) {
+                                        Ok(ws_msg) => {
+                                            handle_server_message(&app, ws_msg, is_onboarded, &x_secret).await;
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Ws: Failed to parse message: {}. Raw: {}", e, text);
+                                        }
+                                    }
                                 }
-                                Err(e) => {
-                                    eprintln!("Ws: Failed to parse message: {}. Raw: {}", e, text);
+                                Some(Ok(Message::Ping(p))) => {
+                                    let _ = write.send(Message::Pong(p)).await;
+                                }
+                                Some(Ok(Message::Close(_))) => {
+                                    println!("Ws: Server sent close frame.");
+                                    break;
+                                }
+                                Some(Ok(m)) => {
+                                    println!("Ws: Received non-text message: {:?}", m);
+                                }
+                                Some(Err(e)) => {
+                                    eprintln!("Ws: Read error: {}", e);
+                                    break;
+                                }
+                                None => {
+                                    println!("Ws: Stream ended.");
+                                    break;
                                 }
                             }
                         }
-                        Ok(Message::Ping(p)) => {
-                            let _ = write.send(Message::Pong(p)).await;
-                        }
-                        Ok(Message::Close(_)) => {
-                            println!("Ws: Server sent close frame.");
-                            break;
-                        }
-                        Ok(m) => {
-                            println!("Ws: Received non-text message: {:?}", m);
-                        }
-                        Err(e) => {
-                            eprintln!("Ws: Read error: {}", e);
-                            break;
+                        _ = ping_interval.tick() => {
+                            let _ = write.send(Message::Ping(Vec::new())).await;
                         }
                     }
                 }
@@ -130,7 +146,22 @@ async fn handle_server_message(
                     if let Ok(mut storage) = key_state.write() {
                         *storage = Some((key_bytes, None));
                     }
-                    let _ = app.emit("vault-do-mount", ());
+
+                    if crate::PENDING_MASTER_KEY_REVEAL.load(Ordering::SeqCst) {
+                        crate::PENDING_MASTER_KEY_REVEAL.store(false, Ordering::SeqCst);
+                        if let Ok(config_dir) = app.path().app_config_dir() {
+                            let config_path = config_dir.join("onboarding.json");
+                            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                                if let Ok(config) = serde_json::from_str::<crate::OnboardingConfig>(&content) {
+                                    if let Some(mnemonic) = config.mnemonic {
+                                        let _ = app.emit("master-key-revealed", mnemonic);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        let _ = app.emit("vault-do-mount", ());
+                    }
                 }
                 Err(e) => {
                     eprintln!("Ws: Failed to decrypt relayed key: {}", e);

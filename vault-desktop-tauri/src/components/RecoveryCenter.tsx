@@ -1,11 +1,21 @@
 import React from "react";
-import { Cloud, History, RefreshCcw, HardDrive, Info } from "lucide-react";
+import { Cloud, History, RefreshCcw, HardDrive, Info, Key, Copy, CheckCircle2, ShieldAlert, X, Eye, Database, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { motion, AnimatePresence } from "framer-motion";
 
-export const RecoveryCenter: React.FC = () => {
+interface RecoveryCenterProps {
+  onRevealMasterKey: () => void;
+  revealedMnemonic: string | null;
+  onClearRevealedMnemonic: () => void;
+}
+
+export const RecoveryCenter: React.FC<RecoveryCenterProps> = ({ onRevealMasterKey, revealedMnemonic, onClearRevealedMnemonic }) => {
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [stats, setStats] = React.useState<any>(null);
+  const [copied, setCopied] = React.useState(false);
+  const [isPurging, setIsPurging] = React.useState(false);
+  const [purgeResult, setPurgeResult] = React.useState<string | null>(null);
+  const [showPurgeConfirm, setShowPurgeConfirm] = React.useState(false);
   const [backupSettings, setBackupSettings] = React.useState(() => {
     const saved = localStorage.getItem('vault_backup_settings');
     return saved ? JSON.parse(saved) : {
@@ -55,6 +65,16 @@ export const RecoveryCenter: React.FC = () => {
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return `${Math.floor(diff / 86400)}d ago`;
   };
+
+  const handleCopy = () => {
+    if (revealedMnemonic) {
+      navigator.clipboard.writeText(revealedMnemonic);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const words = revealedMnemonic ? revealedMnemonic.split(" ") : [];
 
   return (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-2 duration-700">
@@ -156,7 +176,215 @@ export const RecoveryCenter: React.FC = () => {
              </div>
            </div>
         </div>
+
+        {/* Master Key Section */}
+        <div className="col-span-12 space-y-4 mt-4">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-text-tertiary px-2">Master Recovery Key</h3>
+          <div className="p-6 rounded-3xl bg-amber-500/5 border border-amber-500/10">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-3 rounded-xl bg-amber-500/10 text-amber-500">
+                  <Key className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-text-primary">24-Word Master Key</h4>
+                  <p className="text-[10px] text-text-tertiary">Phone authorization required to reveal</p>
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-text-secondary mb-5 leading-relaxed">
+              Your master key is the <span className="text-amber-500 font-bold">only way</span> to recover your vault if you lose your phone.
+              For security, your phone must authorize each reveal.
+            </p>
+            <button
+              onClick={onRevealMasterKey}
+              className="w-full py-4 rounded-xl bg-amber-600 text-pure font-bold text-sm shadow-[0_0_20px_rgba(217,119,6,0.2)] flex items-center justify-center gap-3 transition-all hover:scale-[1.01] active:scale-[0.98]"
+            >
+              <Eye className="w-5 h-5" />
+              Reveal Master Key
+            </button>
+          </div>
+        </div>
+
+        {/* Orphaned Blobs Section */}
+        <div className="col-span-12 space-y-4 mt-4">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-text-tertiary px-2">Cloud Storage Maintenance</h3>
+          <div className="p-6 rounded-3xl bg-rose-500/5 border border-rose-500/10">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 rounded-xl bg-rose-500/10 text-rose-500">
+                <Database className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-text-primary">Purge Orphaned Cloud Blobs</h4>
+                <p className="text-[10px] text-text-tertiary">Remove unreferenced files from Google Drive</p>
+              </div>
+            </div>
+            <p className="text-xs text-text-secondary mb-5 leading-relaxed">
+              Over time, deleted files may leave behind orphaned encrypted blobs in your cloud storage.
+              This scans Google Drive for blobs not referenced by any vault index and removes them.
+            </p>
+            {purgeResult && (
+              <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-500 font-medium">
+                {purgeResult}
+              </div>
+            )}
+            <button
+              onClick={() => setShowPurgeConfirm(true)}
+              disabled={isPurging}
+              className="w-full py-4 rounded-xl bg-rose-600 text-pure font-bold text-sm shadow-[0_0_20px_rgba(225,29,72,0.2)] flex items-center justify-center gap-3 disabled:opacity-50 transition-all hover:scale-[1.01] active:scale-[0.98]"
+            >
+              {isPurging ? (
+                <div className="w-5 h-5 border-2 border-pure border-t-transparent rounded-full animate-spin"></div>
+              ) : (
+                <Trash2 className="w-5 h-5" />
+              )}
+              {isPurging ? "Purging..." : "Scan & Purge Orphaned Blobs"}
+            </button>
+          </div>
+        </div>
       </div>
+
+      {/* Purge Confirmation Modal */}
+      <AnimatePresence>
+        {showPurgeConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-md flex items-center justify-center p-8"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="max-w-md w-full bg-matte rounded-3xl border border-rose-500/20 p-8 shadow-2xl"
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <div className="p-2 rounded-xl bg-rose-500/10">
+                  <ShieldAlert className="w-5 h-5 text-rose-500" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-text-primary">Confirm Purge</h3>
+                  <p className="text-[10px] text-text-tertiary">This action cannot be undone</p>
+                </div>
+              </div>
+
+              <p className="text-xs text-text-secondary mb-6 leading-relaxed">
+                This will scan Google Drive for encrypted blobs not referenced by your vault index
+                and permanently delete them. Only blobs with no matching local or backend reference
+                will be removed. Your active files are safe.
+              </p>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={async () => {
+                    setIsPurging(true);
+                    setShowPurgeConfirm(false);
+                    setPurgeResult(null);
+                    try {
+                      const result = await invoke<string>("cleanup_orphaned_blobs");
+                      setPurgeResult(result);
+                    } catch (e) {
+                      setPurgeResult(`Error: ${e}`);
+                    } finally {
+                      setIsPurging(false);
+                    }
+                  }}
+                  className="flex-1 py-4 rounded-xl bg-rose-600 text-pure font-bold text-sm flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.98]"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Yes, Purge Orphans
+                </button>
+                <button
+                  onClick={() => setShowPurgeConfirm(false)}
+                  className="px-8 py-4 rounded-xl bg-white/5 border border-white/10 text-text-secondary font-bold text-sm hover:bg-white/10 transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Master Key Reveal Modal */}
+      <AnimatePresence>
+        {revealedMnemonic && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-md flex items-center justify-center p-8"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="max-w-2xl w-full bg-matte rounded-3xl border border-amber-500/20 p-8 shadow-2xl"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-amber-500/10">
+                    <ShieldAlert className="w-5 h-5 text-amber-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-text-primary">Your Master Recovery Key</h3>
+                    <p className="text-[10px] text-text-tertiary">Never share these words with anyone</p>
+                  </div>
+                </div>
+                <button
+                  onClick={onClearRevealedMnemonic}
+                  className="p-2 rounded-lg hover:bg-white/5 text-text-secondary hover:text-text-primary transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-3 md:grid-cols-4 gap-2 mb-8">
+                {words.map((word, i) => (
+                  <div
+                    key={i}
+                    className="bg-pure/40 border border-white/5 rounded-xl p-3 flex items-center gap-2"
+                  >
+                    <span className="text-[9px] font-bold text-text-tertiary w-3 shrink-0">{i + 1}</span>
+                    <span className="text-xs font-bold text-text-primary tracking-wide">{word}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={handleCopy}
+                  className="flex-1 py-4 rounded-xl bg-amber-600 text-pure font-bold text-sm flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.98]"
+                >
+                  {copied ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4" />
+                      Copy to Clipboard
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={onClearRevealedMnemonic}
+                  className="px-8 py-4 rounded-xl bg-white/5 border border-white/10 text-text-secondary font-bold text-sm hover:bg-white/10 transition-all"
+                >
+                  Close
+                </button>
+              </div>
+
+              <p className="mt-4 text-[10px] text-amber-500/70 text-center font-medium">
+                For your security, this key was shown only after phone authorization.
+                Store it offline — never digitally.
+              </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

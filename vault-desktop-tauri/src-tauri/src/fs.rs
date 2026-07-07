@@ -189,6 +189,7 @@ fn spawn_sync_worker(
 
             match cmd {
                 SyncCommand::SyncFile { ino } => {
+                    let _guard = crate::TransferGuard::new();
                     let is_ignored = {
                         let f_lock = worker_files.lock().unwrap();
                         is_ignored_path(ino, &*f_lock)
@@ -1256,6 +1257,7 @@ impl Filesystem for VaultFS {
         _lock_owner: Option<u64>,
         reply: ReplyWrite,
     ) {
+        let _guard = crate::TransferGuard::new();
         let open_file_arc = {
             let lock = self.open_files.lock().unwrap();
             match lock.get(&fh) {
@@ -1420,6 +1422,7 @@ impl Filesystem for VaultFS {
         _flush: bool,
         reply: ReplyEmpty,
     ) {
+        let _guard = crate::TransferGuard::new();
         // 1. Flush and remove from open_files
         let open_file_opt = self.open_files.lock().unwrap().remove(&fh);
         let mut is_dirty = false;
@@ -1836,6 +1839,7 @@ impl Filesystem for VaultFS {
     }
 
     fn flush(&mut self, _req: &Request, _ino: u64, fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
+        let _guard = crate::TransferGuard::new();
         let open_file_arc = {
             let lock = self.open_files.lock().unwrap();
             lock.get(&fh).cloned()
@@ -1991,9 +1995,18 @@ fn perform_cloud_reconciliation(
     let gdrive_files = files_json["files"].as_array().ok_or("Invalid response from GDrive file listing")?;
 
     // FINAL SAFETY CHECK: If GDrive has many files but our index is nearly empty, ABORT.
+    // Only abort if local files still reference cloud_blob_ids (active restoration scenario).
+    // If no local file has a cloud_blob_id, files were intentionally deleted — safe to clean up.
     if local_file_count <= 1 && gdrive_files.len() > 2 {
-        println!("VaultFS Reconciler: DANGER! Local index is empty but Google Drive has {} files. Aborting purge to prevent data loss.", gdrive_files.len());
-        return Ok(());
+        let any_have_cloud_blob = {
+            let files = files_arc.lock().unwrap();
+            files.values().any(|f| f.cloud_blob_id.is_some())
+        };
+        if any_have_cloud_blob {
+            println!("VaultFS Reconciler: DANGER! Local index has {} files referencing cloud blobs but Google Drive has {} files. Aborting purge to prevent data loss.", local_file_count, gdrive_files.len());
+            return Ok(());
+        }
+        println!("VaultFS Reconciler: Local index is empty and no files reference cloud blobs — proceeding with cleanup.");
     }
 
     let mut active_blobs = std::collections::HashSet::new();
@@ -2042,6 +2055,112 @@ fn perform_cloud_reconciliation(
     crate::drive_mirror::purge_blobs_direct(config_path, garbage_blobs)?;
 
     Ok(())
+}
+
+/// Manually find and purge orphaned cloud blobs (GDrive files with no matching local or backend index entry).
+/// Skips all safety checks since the user explicitly requested this action.
+/// Returns the count of purged blobs.
+pub fn cleanup_orphaned_blobs(
+    config_path: &PathBuf,
+    files_arc: &Arc<Mutex<HashMap<u64, VaultFile>>>,
+) -> Result<usize, String> {
+    let config_content = std_fs::read_to_string(config_path).map_err(|e| e.to_string())?;
+    let config: crate::OnboardingConfig = serde_json::from_str(&config_content).map_err(|e| e.to_string())?;
+
+    let mut token = match config.google_access_token {
+        Some(t) => t,
+        None => return Err("Google access token missing. Connect Google Drive first.".to_string()),
+    };
+
+    let client = reqwest::blocking::Client::new();
+
+    let query_gdrive = |client: &reqwest::blocking::Client, token: &str, q: &str, fields: &str| -> Result<serde_json::Value, String> {
+        let res = client.get("https://www.googleapis.com/drive/v3/files")
+            .bearer_auth(token)
+            .query(&[("q", q), ("fields", fields)])
+            .send()
+            .map_err(|e| e.to_string())?;
+
+        if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err("UNAUTHORIZED".to_string());
+        }
+
+        if !res.status().is_success() {
+            return Err(format!("GDrive query failed: status {}", res.status()));
+        }
+
+        res.json::<serde_json::Value>().map_err(|e| e.to_string())
+    };
+
+    let mut folder_res = query_gdrive(&client, &token, "name='SecureVault' and mimeType='application/vnd.google-apps.folder' and trashed=false", "files(id)");
+
+    if let Err(ref e) = folder_res {
+        if e == "UNAUTHORIZED" {
+            println!("cleanup_orphaned_blobs: Access token expired, refreshing...");
+            if let Ok(new_token) = crate::oauth::refresh_google_token_blocking(config_path) {
+                token = new_token;
+                folder_res = query_gdrive(&client, &token, "name='SecureVault' and mimeType='application/vnd.google-apps.folder' and trashed=false", "files(id)");
+            }
+        }
+    }
+
+    let folder_json = folder_res?;
+    let files_arr = folder_json["files"].as_array().ok_or("Invalid response from GDrive folder search")?;
+    if files_arr.is_empty() {
+        return Err("SecureVault folder not found on Google Drive.".to_string());
+    }
+
+    let folder_id = files_arr[0]["id"].as_str().ok_or("Folder ID missing")?;
+
+    let q_files = format!("'{}' in parents and trashed=false", folder_id);
+    let files_json = query_gdrive(&client, &token, &q_files, "files(id,name)")?;
+    let gdrive_files = files_json["files"].as_array().ok_or("Invalid response from GDrive file listing")?;
+
+    let mut active_blobs = std::collections::HashSet::new();
+
+    let (_, pk) = crate::get_or_create_signing_key_at(config_path.clone());
+    let url = format!("{}/api/vault/index?public_key={}", crate::config::get_backend_url(), pk);
+    if let Ok(res) = client.get(&url).send() {
+        if res.status().is_success() {
+            if let Ok(val) = res.json::<serde_json::Value>() {
+                if let Some(blob_id) = val["blob_id"].as_str() {
+                    if !blob_id.is_empty() {
+                        active_blobs.insert(blob_id.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    {
+        let files = files_arc.lock().unwrap();
+        for file in files.values() {
+            if let Some(blob_id) = &file.cloud_blob_id {
+                active_blobs.insert(blob_id.clone());
+            }
+        }
+    }
+
+    let mut garbage_blobs = Vec::new();
+    for f in gdrive_files {
+        if let Some(name) = f["name"].as_str() {
+            if name.len() == 36 && !active_blobs.contains(name) {
+                garbage_blobs.push(name.to_string());
+            }
+        }
+    }
+
+    let count = garbage_blobs.len();
+    if count == 0 {
+        println!("cleanup_orphaned_blobs: No orphaned blobs found.");
+        return Ok(0);
+    }
+
+    println!("cleanup_orphaned_blobs: Found {} orphaned blobs, purging...", count);
+    crate::drive_mirror::purge_blobs_direct(config_path, garbage_blobs)?;
+    println!("cleanup_orphaned_blobs: Successfully purged {} orphaned blobs.", count);
+
+    Ok(count)
 }
 
 #[cfg(test)]

@@ -13,9 +13,10 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 use std::collections::HashMap;
 use std::fs as std_fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -96,6 +97,12 @@ async fn request_unlock_push(app: AppHandle) -> Result<(), String> {
     } else {
         Err(format!("Push request failed: {}", res.status()))
     }
+}
+
+#[tauri::command]
+async fn request_master_key_reveal(app: AppHandle) -> Result<(), String> {
+    PENDING_MASTER_KEY_REVEAL.store(true, Ordering::SeqCst);
+    request_unlock_push(app).await
 }
 
 #[allow(dead_code)]
@@ -345,6 +352,28 @@ async fn sync_now() -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn cleanup_orphaned_blobs(
+    app: AppHandle,
+    files_state: tauri::State<'_, SharedFileList>,
+) -> Result<String, String> {
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config_path = config_dir.join("onboarding.json");
+    if !config_path.exists() {
+        return Err("Vault not configured.".to_string());
+    }
+
+    let files_arc = files_state.inner().clone();
+    let count = std::thread::spawn(move || {
+        fs::cleanup_orphaned_blobs(&config_path, &files_arc)
+    })
+    .join()
+    .map_err(|e| format!("Thread panicked: {:?}", e))?
+    .map_err(|e| e.to_string())?;
+
+    Ok(format!("Successfully purged {} orphaned cloud blob(s).", count))
+}
+
+#[tauri::command(rename_all = "snake_case")]
 async fn export_vault_archive(app: AppHandle) -> Result<String, String> {
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     
@@ -396,6 +425,37 @@ static LAST_ACTIVITY: AtomicU64 = AtomicU64::new(0);
 pub static LAST_SYNC_TIME: AtomicU64 = AtomicU64::new(0);
 static AUTO_LOCK_TIMEOUT: AtomicU64 = AtomicU64::new(300);
 
+/// Tracks active file transfers (WebDAV PUT, FUSE writes, cloud sync uploads).
+/// The inactivity watcher will NOT auto-lock while this is > 0.
+pub static ACTIVE_TRANSFERS: AtomicU64 = AtomicU64::new(0);
+
+/// Set to true when the user requests a master key reveal via phone auth.
+/// The WebSocket handler checks this flag — if set, it emits "master-key-revealed"
+/// instead of "vault-do-mount" after the phone approves.
+pub static PENDING_MASTER_KEY_REVEAL: AtomicBool = AtomicBool::new(false);
+
+/// RAII guard that increments ACTIVE_TRANSFERS on creation and decrements on drop.
+/// Also refreshes LAST_ACTIVITY so the inactivity watcher sees user activity.
+pub struct TransferGuard;
+
+impl TransferGuard {
+    pub fn new() -> Self {
+        ACTIVE_TRANSFERS.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for TransferGuard {
+    fn drop(&mut self) {
+        ACTIVE_TRANSFERS.fetch_sub(1, Ordering::SeqCst);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        LAST_ACTIVITY.store(now, Ordering::SeqCst);
+    }
+}
+
 async fn register_device_internal(public_key: String) -> Result<(), String> {
     let client = reqwest::Client::new();
     let os_info = if cfg!(target_os = "windows") {
@@ -445,6 +505,17 @@ fn start_inactivity_watcher(app: AppHandle, public_key_b64: String) {
 
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
+
+        // If any file transfer is in progress, skip auto-lock and reset timer
+        if ACTIVE_TRANSFERS.load(Ordering::SeqCst) > 0 {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            LAST_ACTIVITY.store(now, Ordering::SeqCst);
+            continue;
+        }
+
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -728,6 +799,7 @@ async fn create_vault_directory(name: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn upload_to_vault(source_path: String, dest_prefix: Option<String>) -> Result<(), String> {
+    let _guard = TransferGuard::new();
     let src = PathBuf::from(source_path);
     let filename = src.file_name().ok_or("Invalid filename")?;
     let mut dest = vault_mount_path()?;
@@ -755,6 +827,7 @@ async fn delete_from_vault(_ino: u64, name: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn download_from_vault(name: String, dest_path: String) -> Result<(), String> {
+    let _guard = TransferGuard::new();
     let src = vault_mount_path()?.join(name);
     let dest = PathBuf::from(dest_path);
     std_fs::copy(src, dest).map_err(|e| e.to_string())?;
@@ -1151,13 +1224,30 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                 let _ = request.respond(tiny_http::Response::empty(404));
             }
             "PUT" => {
+                let _guard = TransferGuard::new();
                 let path = url.trim_start_matches('/');
-                let mut data = Vec::new();
-                let _ = request.as_reader().read_to_end(&mut data);
-
+                
+                // Stream request body to a temp file to avoid holding it all in memory
                 let config_dir = app.path().app_config_dir().unwrap();
                 let shadow_dir = config_dir.join(".vault_shadow");
                 let local_index_path = config_dir.join("local_index.json");
+                let _ = std_fs::create_dir_all(&shadow_dir);
+                
+                let temp_path = shadow_dir.join(format!("_put_{}.tmp", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+                
+                let mut written: u64 = 0;
+                {
+                    let mut tmp = std_fs::File::create(&temp_path).map_err(|_| ());
+                    let mut buf = [0u8; 65536];
+                    loop {
+                        let n = request.as_reader().read(&mut buf).unwrap_or(0);
+                        if n == 0 { break; }
+                        if let Ok(ref mut f) = tmp {
+                            let _ = f.write_all(&buf[..n]);
+                        }
+                        written += n as u64;
+                    }
+                }
 
                 let files_state = app.state::<SharedFileList>();
                 let mut files = files_state.lock().unwrap();
@@ -1166,12 +1256,21 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                 
                 let res: Result<bool, String> = if let Some(ino) = existing_ino {
                     let shadow_path = shadow_dir.join(format!("{}.blob", ino));
-                    let _ = std_fs::create_dir_all(&shadow_dir);
+                    // Read temp file, encrypt, write to shadow
+                    let data = match std_fs::read(&temp_path) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            eprintln!("Failed to read temp file for overwrite: {}", e);
+                            let _ = std_fs::remove_file(&temp_path);
+                            let _ = request.respond(tiny_http::Response::empty(500));
+                            return;
+                        }
+                    };
                     let encrypted = crypto::encrypt_local_data(&data, key_state.clone()).unwrap();
-                    let _ = std_fs::write(shadow_path, encrypted);
+                    let _ = std_fs::write(&shadow_path, encrypted);
                     
                     if let Some(f) = files.get_mut(&ino) {
-                        f.size = data.len() as u64;
+                        f.size = written;
                         f.modified_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
                     }
                     
@@ -1179,12 +1278,21 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                     if let Some(tx) = sync_tx.as_ref() {
                         let _ = tx.send(fs::SyncCommand::SyncFile { ino });
                     }
-                    Ok(true) // Was overwrite
+                    let _ = std_fs::remove_file(&temp_path);
+                    Ok(true)
                 } else {
                     let next_ino = files.keys().max().cloned().unwrap_or(1) + 1;
                     let shadow_path = shadow_dir.join(format!("{}.blob", next_ino));
-                    let _ = std_fs::create_dir_all(&shadow_dir);
                     
+                    let data = match std_fs::read(&temp_path) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            eprintln!("Failed to read temp file for new file: {}", e);
+                            let _ = std_fs::remove_file(&temp_path);
+                            let _ = request.respond(tiny_http::Response::empty(500));
+                            return;
+                        }
+                    };
                     let encrypted = crypto::encrypt_local_data(&data, key_state.clone()).unwrap();
                     let _ = std_fs::write(&shadow_path, encrypted);
 
@@ -1193,7 +1301,7 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                         parent_ino: 1,
                         name: path.to_string(),
                         kind: fs::VaultFileType::RegularFile,
-                        size: data.len() as u64,
+                        size: written,
                         modified_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
                         shadow_path: Some(shadow_path),
                         cloud_blob_id: None,
@@ -1210,7 +1318,8 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                         let _ = tx.send(fs::SyncCommand::SyncFile { ino: next_ino });
                         let _ = tx.send(fs::SyncCommand::SyncIndex);
                     }
-                    Ok(false) // Was new
+                    let _ = std_fs::remove_file(&temp_path);
+                    Ok(false)
                 };
 
                 if let Ok(is_overwrite) = res {
@@ -1402,6 +1511,7 @@ pub fn run() {
             reset_idle_timer,
             set_auto_lock_timeout,
             request_unlock_push,
+            request_master_key_reveal,
             get_desktop_public_key,
             check_onboarding,
             complete_onboarding,
@@ -1412,6 +1522,7 @@ pub fn run() {
             upload_to_vault,
             crypto::get_master_mnemonic,
             sync_now,
+            cleanup_orphaned_blobs,
             get_recovery_stats,
             export_vault_archive,
             delete_from_vault,
