@@ -1,5 +1,5 @@
 import React from "react";
-import { Cloud, History, RefreshCcw, HardDrive, Info, Key, Copy, CheckCircle2, ShieldAlert, X, Eye, Database, Trash2 } from "lucide-react";
+import { Cloud, History, RefreshCcw, HardDrive, Info, Key, Copy, CheckCircle2, ShieldAlert, X, Eye } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { motion, AnimatePresence } from "framer-motion";
 
