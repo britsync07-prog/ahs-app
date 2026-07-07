@@ -64,39 +64,47 @@ pub fn purge_blobs_direct(config_path: &PathBuf, blob_ids: Vec<String>) -> Resul
     };
 
     let (sk, pk) = crate::get_or_create_signing_key_at(config_path.clone());
-    let payload = serde_json::json!({ "blob_ids": blob_ids });
-    let payload_bytes = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
-    let signature = sk.sign(&payload_bytes);
-    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| e.to_string())?;
 
-    let client = Client::new();
-    let mut backend_res = client.post(format!("{}/api/vault/delete", crate::config::get_backend_url()))
-        .header("X-Desktop-PK", pk.clone())
-        .header("X-Signature", sig_b64.clone())
-        .header("X-Google-Token", &token)
-        .json(&payload)
-        .send();
+    for chunk in blob_ids.chunks(15) {
+        let chunk_vec = chunk.to_vec();
+        let payload = serde_json::json!({ "blob_ids": chunk_vec });
+        let payload_bytes = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
+        let signature = sk.sign(&payload_bytes);
+        let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
 
-    if let Ok(ref res) = backend_res {
-        if res.status() == reqwest::StatusCode::UNAUTHORIZED {
-            println!("drive_mirror: Got 401, refreshing Google token...");
-            if let Ok(new_token) = crate::oauth::refresh_google_token_blocking(config_path) {
-                token = new_token;
-                backend_res = client.post(format!("{}/api/vault/delete", crate::config::get_backend_url()))
-                    .header("X-Desktop-PK", pk)
-                    .header("X-Signature", sig_b64)
-                    .header("X-Google-Token", &token)
-                    .json(&payload)
-                    .send();
+        let mut backend_res = client.post(format!("{}/api/vault/delete", crate::config::get_backend_url()))
+            .header("X-Desktop-PK", pk.clone())
+            .header("X-Signature", sig_b64.clone())
+            .header("X-Google-Token", &token)
+            .json(&payload)
+            .send();
+
+        if let Ok(ref res) = backend_res {
+            if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+                println!("drive_mirror: Got 401, refreshing Google token...");
+                if let Ok(new_token) = crate::oauth::refresh_google_token_blocking(config_path) {
+                    token = new_token;
+                    backend_res = client.post(format!("{}/api/vault/delete", crate::config::get_backend_url()))
+                        .header("X-Desktop-PK", pk.clone())
+                        .header("X-Signature", sig_b64.clone())
+                        .header("X-Google-Token", &token)
+                        .json(&payload)
+                        .send();
+                }
             }
         }
+
+        let res = backend_res.map_err(|e| e.to_string())?;
+        if !res.status().is_success() {
+            return Err(format!("Backend database/GDrive deletion failed: status {}", res.status()));
+        }
+        
+        println!("drive_mirror: Successfully synchronized deletion of batch (size {}) with backend database & GDrive", chunk_vec.len());
     }
 
-    let res = backend_res.map_err(|e| e.to_string())?;
-    if res.status().is_success() {
-        println!("drive_mirror: Successfully synchronized deletion with backend database & GDrive");
-        Ok(())
-    } else {
-        Err(format!("Backend database/GDrive deletion failed: status {}", res.status()))
-    }
+    Ok(())
 }
