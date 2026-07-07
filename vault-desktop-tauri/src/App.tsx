@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { check } from "@tauri-apps/plugin-updater";
+import { ask, message } from "@tauri-apps/plugin-dialog";
 import { AnimatePresence, motion } from "framer-motion";
 import { LockScreen } from "./screens/LockScreen";
 import { Dashboard } from "./screens/Dashboard";
@@ -56,6 +58,23 @@ function App() {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
+    
+    // Check for updates
+    const checkForUpdates = async () => {
+      try {
+        const update = await check();
+        if (update) {
+          const yes = await ask(`Update to ${update.version} is available!\n\nRelease notes: ${update.body}\n\nInstall now?`, { title: 'Update Available', kind: 'info' });
+          if (yes) {
+            await update.downloadAndInstall();
+            await message("Update installed successfully. Please close and reopen the app.", { title: 'Update Complete', kind: 'info' });
+          }
+        }
+      } catch (error) {
+        console.error("Failed to check for updates", error);
+      }
+    };
+    checkForUpdates();
   }, [theme]);
 
   const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
