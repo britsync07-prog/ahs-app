@@ -143,16 +143,16 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var zipUrl, sigUrl string
+	var exeUrl, sigUrl string
 	for _, asset := range release.Assets {
-		if strings.HasSuffix(asset.Name, ".zip") {
-			zipUrl = asset.BrowserDownloadUrl
-		} else if strings.HasSuffix(asset.Name, ".sig") {
+		if strings.HasSuffix(asset.Name, "-setup.exe") {
+			exeUrl = asset.BrowserDownloadUrl
+		} else if strings.HasSuffix(asset.Name, "-setup.exe.sig") {
 			sigUrl = asset.BrowserDownloadUrl
 		}
 	}
 
-	if zipUrl == "" || sigUrl == "" {
+	if exeUrl == "" || sigUrl == "" {
 		// Fallback for debugging if release is not fully published yet
 		updateResponse := map[string]interface{}{
 			"version":  "v0.1.2",
@@ -191,7 +191,7 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		"platforms": map[string]interface{}{
 			"windows-x86_64": map[string]interface{}{
 				"signature": strings.TrimSpace(string(sigBytes)),
-				"url":       zipUrl,
+				"url":       exeUrl,
 			},
 		},
 	}
