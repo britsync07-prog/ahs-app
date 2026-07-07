@@ -1,7 +1,7 @@
 package api
 
 import (
-	"bytes"
+
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/sha256"
