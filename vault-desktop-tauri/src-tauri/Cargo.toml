@@ -1,6 +1,6 @@
 [package]
 name = "ahs-vault"
-version = "0.1.15"
+version = "0.1.16"
 description = "AHS Secure Biometric Vault"
 authors = ["you"]
 edition = "2021"

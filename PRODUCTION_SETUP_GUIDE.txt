@@ -21,9 +21,17 @@ SECRET VALUE: dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUl
 SECRET NAME:  TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 SECRET VALUE: (Keep this empty/blank)
 
+IMPORTANT: Do not generate a new updater signing key for normal releases.
+Installed desktop apps trust the public key embedded in
+`vault-desktop-tauri/src-tauri/tauri.conf.json`. If GitHub Actions signs
+with a different private key, existing users will reject the update.
+
+The production Windows app identifier is `com.britsync.ahs-vault`; keep it
+stable so installed apps continue using the same AppData and install identity.
+
 3. HOW TO RELEASE A NEW VERSION
 -------------------------------
-A) Update the version number in `vault-desktop-tauri/src-tauri/tauri.conf.json` 
+A) Update the version number in `vault-desktop-tauri/src-tauri/tauri.conf.json`
    and `vault-desktop-tauri/package.json`.
 B) Commit and push the changes.
 C) Create a "New Release" on GitHub with a tag (e.g., v0.1.1).
