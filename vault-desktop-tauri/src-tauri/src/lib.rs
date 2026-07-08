@@ -39,6 +39,7 @@ pub struct MobileDevice {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+#[serde(default)]
 pub struct OnboardingConfig {
     pub onboarded: bool,
     pub mnemonic: Option<String>,
