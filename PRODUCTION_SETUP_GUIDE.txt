@@ -16,7 +16,7 @@ Settings > Secrets and Variables > Actions > New repository secret
 Add the following two secrets:
 
 SECRET NAME:  TAURI_SIGNING_PRIVATE_KEY
-SECRET VALUE: Keep the existing repository secret that matches the public key in `vault-desktop-tauri/src-tauri/tauri.conf.json`.
+SECRET VALUE: Use the private key that matches the installed production public key `C7BE727065470402`.
 
 SECRET NAME:  TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 SECRET VALUE: (Keep this empty/blank)
@@ -28,6 +28,9 @@ with the matching private key, or existing users will reject the update.
 
 The production Windows app identifier is `com.britsync.ahs-vault`; keep it
 stable so installed apps continue using the same AppData and install identity.
+
+The installed production desktop app checked on this PC is `G:\AHS Vault\ahs-vault.exe`
+version `0.1.1`; it trusts updater public key `C7BE727065470402`.
 
 3. HOW TO RELEASE A NEW VERSION
 -------------------------------

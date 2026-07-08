@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "ahs-vault"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "aes-gcm",
  "base64 0.21.7",
