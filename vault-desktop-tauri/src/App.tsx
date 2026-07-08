@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { AnimatePresence, motion } from "framer-motion";
 import { LockScreen } from "./screens/LockScreen";
@@ -67,7 +68,7 @@ function App() {
           const yes = await ask(`Update to ${update.version} is available!\n\nRelease notes: ${update.body}\n\nInstall now?`, { title: 'Update Available', kind: 'info' });
           if (yes) {
             await update.downloadAndInstall();
-            await message("Update installed successfully. Please close and reopen the app.", { title: 'Update Complete', kind: 'info' });
+            await relaunch();
           }
         }
       } catch (error) {
