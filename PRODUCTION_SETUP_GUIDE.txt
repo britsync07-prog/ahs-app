@@ -16,15 +16,15 @@ Settings > Secrets and Variables > Actions > New repository secret
 Add the following two secrets:
 
 SECRET NAME:  TAURI_SIGNING_PRIVATE_KEY
-SECRET VALUE: dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5RU5hNU5vU0xoQjA0SmdaK2Z2MnZVQVpnOTBqeUgyWFYwMisyalJac3hmRUFBQkFBQUFBQUFBQUFBQUlBQUFBQVM5Qk1uMWg1K0dSV2tMaWQxaEhsck1pV0ZwQnVDNjNQVFphaFExbGV5Slh5UzByeEc1NWxxUXhTNUhGOUVxOCtwZVg4eFhvTTBtcWZnQXF0L1J0SVNiSTZHNlozR25XbDA2cXdOMGlQNlNMcFFOcm50Y2pzNytHTDdBTjhYc0poQmdzUWN4Si9WTTg9Cg==
+SECRET VALUE: Keep the existing repository secret that matches the public key in `vault-desktop-tauri/src-tauri/tauri.conf.json`.
 
 SECRET NAME:  TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 SECRET VALUE: (Keep this empty/blank)
 
 IMPORTANT: Do not generate a new updater signing key for normal releases.
 Installed desktop apps trust the public key embedded in
-`vault-desktop-tauri/src-tauri/tauri.conf.json`. If GitHub Actions signs
-with a different private key, existing users will reject the update.
+`vault-desktop-tauri/src-tauri/tauri.conf.json`. GitHub Actions must sign
+with the matching private key, or existing users will reject the update.
 
 The production Windows app identifier is `com.britsync.ahs-vault`; keep it
 stable so installed apps continue using the same AppData and install identity.
