@@ -35,8 +35,8 @@ jobs:
         working-directory: vault-desktop-tauri
         run: npm run tauri build
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5Ti9qNTNEWjllZkY4cU4zM3M3dzFVdFdmaFpHSlMyUHh4VzlZdVF2eXJHTUFBQkFBQUFBQUFBQUFBQUlBQUFBQS9lZ3dLeVB5TlRtOXBqYnI0U0ZkSUJhUWxZbTJsNjY3UGFNc0grbGhTK1lFbnl5VjNSa0lBQUE3TFpaYWhmVmh2eGZkdW0zVFhtNllzbVFFYzFzamRuU2l0ZG5yTE1UVStiQy9zL2VPRVcxZVRWRk45WXNsVEdUOHlrTkpOSG1SMVBCQ1pRUEg3Ums9Cg=="
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: "ahs2026"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
