@@ -37,7 +37,7 @@
     ],
     "windows": {
       "nsis": {
-        "installMode": "passive",
+        "installMode": "both",
         "installerHooks": "./windows/hooks.nsh"
       },
       "webviewInstallMode": {
