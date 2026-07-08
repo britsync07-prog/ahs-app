@@ -197,8 +197,12 @@ function App() {
     const unlistenPairing = listen<{ public_key: string; x_public_key: string }>("pairing-success", (event) => {
        console.log("Pairing success event received:", event.payload);
        setMobileKeys(event.payload);
-       // handleGenerateMasterKey(); // REMOVED: Identity is already established in initIdentity()
-       setOnboardingStep("master-key");
+       // Check if we are already onboarded, if so we don't change onboarding step
+       invoke<boolean>("check_onboarding").then((isOnboarded) => {
+           if (!isOnboarded) {
+               setOnboardingStep("master-key");
+           }
+       });
     });
 
     const unlistenMount = listen("vault-do-mount", () => {

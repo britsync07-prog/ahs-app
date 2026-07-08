@@ -2,7 +2,8 @@ import React, { useState, useEffect } from "react";
 import { Smartphone, Monitor, Shield, Trash2, Clock, CheckCircle2, QrCode, X } from "lucide-react";
 import { getBackendUrl } from "../config";
 import { invoke } from "@tauri-apps/api/core";
-import { QRCodeSVG } from 'qrcode.react';
+import { QRCodeSVG } from "qrcode.react";
+import { listen } from "@tauri-apps/api/event";
 
 interface Device {
   name: string;
@@ -20,14 +21,30 @@ export const DeviceManagement: React.FC = () => {
 
   const fetchDevices = async () => {
     try {
-      // Need the desktop's public key to fetch its authorized devices
-      const info: any = await invoke("get_desktop_identity_info");
+      // Fetch devices from local Rust config
+      const localDevices: any[] = await invoke("get_mobile_devices");
       
-      const response = await fetch(`${getBackendUrl()}/api/vault/devices?public_key=${encodeURIComponent(info.public_key)}`);
-      if (response.ok) {
-        const data = await response.json();
-        setDevices(data);
-      }
+      // Also fetch from backend to get last_active status if needed
+      const info: any = await invoke("get_desktop_identity_info");
+      let backendDevices: any[] = [];
+      try {
+          const response = await fetch(`${getBackendUrl()}/api/vault/devices?public_key=${encodeURIComponent(info.public_key)}`);
+          if (response.ok) {
+              backendDevices = await response.json();
+          }
+      } catch (e) {}
+
+      const merged = localDevices.map(ld => {
+          const bd = backendDevices.find(b => b.public_key === ld.public_key);
+          return {
+              name: ld.name,
+              os: bd?.os || "Mobile Device",
+              status: bd ? "Online" : "Offline",
+              last_active: bd?.last_active || new Date().toISOString(),
+              public_key: ld.public_key
+          };
+      });
+      setDevices(merged);
     } catch (e) {
       console.error("Failed to fetch devices:", e);
     } finally {
@@ -35,24 +52,43 @@ export const DeviceManagement: React.FC = () => {
     }
   };
 
+
   useEffect(() => {
     fetchDevices();
     const interval = setInterval(fetchDevices, 15000);
-    return () => clearInterval(interval);
+    
+    const unlistenPairing = listen<{ public_key: string; x_public_key: string }>("pairing-success", async (event: any) => {
+       console.log("DeviceManagement pairing success:", event.payload);
+       try {
+           await invoke("add_mobile_device", {
+               name: "Secondary Device",
+               mobilePublicKey: event.payload.public_key,
+               mobileXPublicKey: event.payload.x_public_key
+           });
+           setShowPairingQR(false);
+           fetchDevices();
+       } catch (e) {
+           console.error("Failed to add mobile device:", e);
+       }
+    });
+
+    return () => {
+        clearInterval(interval);
+        unlistenPairing.then((f: any) => f());
+    };
   }, []);
 
-  const handleDelete = async (pk: string, name: string, os: string) => {
+  const handleDelete = async (pk: string, name: string) => {
     if (!confirm(`Are you sure you want to de-authorize "${name}"? This will immediately revoke access for all sessions matching this device.`)) return;
 
     try {
-      const response = await fetch(`${getBackendUrl()}/api/vault/devices?public_key=${encodeURIComponent(pk)}&bulk=true`, {
+      await invoke("remove_mobile_device", { publicKey: pk });
+      // Also delete from backend
+      await fetch(`${getBackendUrl()}/api/vault/devices?public_key=${encodeURIComponent(pk)}&bulk=true`, {
         method: 'DELETE'
-      });
-      if (response.ok) {
-        setDevices(prev => prev.filter(d => d.name !== name || d.os !== os));
-      } else {
-        console.error("Failed to delete device");
-      }
+      }).catch(() => {});
+      
+      setDevices(prev => prev.filter(d => d.public_key !== pk));
     } catch (e) {
       console.error("Delete error:", e);
     }
@@ -138,7 +174,7 @@ export const DeviceManagement: React.FC = () => {
 
                 <div className="flex items-center gap-2">
                   <button 
-                    onClick={() => handleDelete(device.public_key, device.name, device.os)}
+                    onClick={() => handleDelete(device.public_key, device.name)}
                     className="p-3 rounded-xl hover:bg-red/10 text-text-tertiary hover:text-red transition-all"
                     title="De-authorize Device"
                   >
