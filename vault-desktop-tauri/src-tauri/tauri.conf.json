@@ -37,7 +37,7 @@
     ],
     "windows": {
       "nsis": {
-        "installMode": "both",
+        "installMode": "passive",
         "installerHooks": "./windows/hooks.nsh"
       },
       "webviewInstallMode": {
@@ -50,7 +50,7 @@
       "endpoints": [
         "https://ahs.mayfairmarketing.online/api/update"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM3QkU3MjcwNjU0NzA0MDIKUldRQ0JFZGxjSEsreCtMQXk2LzZZdzVmTXJYNW5TdUVpSE96WE1uWnE4Q3lDYXp5SmlJYUlGK2UK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlEMzU4NzE5RjVGNDRCRjAKUldUd1MvVDFHWWMxblhpZnU1WVN4UjB4dnFaS2FIa1JIS0ZZbFVTY0QzMDZqeEtXUkNpRGFYcTYK"
     }
   }
 }
