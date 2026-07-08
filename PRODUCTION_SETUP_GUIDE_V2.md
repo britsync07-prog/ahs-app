@@ -15,12 +15,13 @@ To ensure you never face the password hassle again, your GitHub Repository Secre
 
 1.  Navigate to your repository on GitHub.
 2.  Go to **Settings** > **Secrets and variables** > **Actions**.
-3.  **Delete** the `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secret if it exists. (We removed it from the workflow completely to guarantee it never errors out).
-4.  Update or Create the `TAURI_SIGNING_PRIVATE_KEY` secret. Paste in the exact passwordless private key below (no extra spaces):
+3.  Update or Create the `TAURI_SIGNING_PRIVATE_KEY` secret. Paste in the exact private key below (no extra spaces):
 
 ```text
-dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5cUNWUm5RVi82emxieHZiR0tMVnRnNWtsMTBleCtJTG9WbmtrMHBWTlV4Y0FBQkFBQUFBQUFBQUFBQUlBQUFBQTFVVEU1eTdlRFdVbEVqdkY5MTdRQ2NRRUZiOHNhd0gwL1ZLVUdnZWdhT2RZa2paQmFhLzdpRTVuZm5iditEcjJ2dHkvUlhMbmQyOGs4RDRPYU9iTmk3WGtqdnJ1U3dCZk8xaWYwc0ZTejRiOVVrZnNPaUpzL21PeGNIUXNOZkpab3NBRG9NMWdiWWc9Cg==
+dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5Ti9qNTNEWjllZkY4cU4zM3M3dzFVdFdmaFpHSlMyUHh4VzlZdVF2eXJHTUFBQkFBQUFBQUFBQUFBQUlBQUFBQS9lZ3dLeVB5TlRtOXBqYnI0U0ZkSUJhUWxZbTJsNjY3UGFNc0grbGhTK1lFbnl5VjNSa0lBQUE3TFpaYWhmVmh2eGZkdW0zVFhtNllzbVFFYzFzamRuU2l0ZG5yTE1UVStiQy9zL2VPRVcxZVRWRk45WXNsVEdUOHlrTkpOSG1SMVBCQ1pRUEg3Ums9Cg==
 ```
+
+4.  **CRITICAL:** Create a new secret called `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and set its value to exactly: `ahs2026`
 
 ## 3. How to Release a New Update
 
