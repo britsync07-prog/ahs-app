@@ -1,4 +1,10 @@
 # AHS Vault
+<div align="center">
+
+![License](https://img.shields.io/github/license/britsync07-prog/ahs-app?style=flat-square&label=license&color=06b6d4) ![Language](https://img.shields.io/github/languages/top/britsync07-prog/ahs-app?style=flat-square&color=0ea5e9) ![Stars](https://img.shields.io/github/stars/britsync07-prog/ahs-app?style=flat-square&color=f59e0b) ![Last commit](https://img.shields.io/github/last-commit/britsync07-prog/ahs-app?style=flat-square&color=22c55e) ![Repo size](https://img.shields.io/github/repo-size/britsync07-prog/ahs-app?style=flat-square&color=94a3b8)
+
+</div>
+
 > Zero-knowledge encrypted vault unlocked by your phone and your face - desktop, web, and mobile working as one.
 
 AHS Vault is a cross-platform password/file vault built around a zero-knowledge architecture: files are encrypted client-side before they ever touch the cloud, and unlocking is performed by a paired smartphone or a WebAuthn platform authenticator (Face ID / Touch ID) with a PIN fallback. It targets privacy-conscious individuals and small teams who want a "phone-as-key" experience instead of another master-password prompt.
@@ -61,17 +67,17 @@ The system splits responsibilities so the server never can read user data:
 ```text
 ahs-app/
 +-- vault-backend-go/        # Go "blind cloud" API
-¦   +-- cmd/api/             # Server entry point
-¦   +-- internal/api/        # Chi router, HTTP/WS handlers, /api/update feed
-¦   +-- internal/auth/       # WebAuthn + cryptographic signaling logic
-¦   +-- internal/db/         # PostgreSQL repository + JSON store, migrations
-¦   +-- internal/storage/    # MinIO/S3 adapter, Google Drive mirror
-¦   +-- internal/websocket/  # Unlock-signal hub
+ï¿½   +-- cmd/api/             # Server entry point
+ï¿½   +-- internal/api/        # Chi router, HTTP/WS handlers, /api/update feed
+ï¿½   +-- internal/auth/       # WebAuthn + cryptographic signaling logic
+ï¿½   +-- internal/db/         # PostgreSQL repository + JSON store, migrations
+ï¿½   +-- internal/storage/    # MinIO/S3 adapter, Google Drive mirror
+ï¿½   +-- internal/websocket/  # Unlock-signal hub
 +-- vault-desktop-tauri/     # Desktop client
-¦   +-- src/                 # React UI: LockScreen, VaultExplorer, SecurityCenter,
-¦   ¦                        #   RecoveryCenter, DeviceManagement, AutoLockSettings
-¦   +-- src-tauri/           # Rust core: crypto.rs, fs.rs, sync.rs,
-¦                            #   drive_mirror.rs, oauth.rs, shield.rs
+ï¿½   +-- src/                 # React UI: LockScreen, VaultExplorer, SecurityCenter,
+ï¿½   ï¿½                        #   RecoveryCenter, DeviceManagement, AutoLockSettings
+ï¿½   +-- src-tauri/           # Rust core: crypto.rs, fs.rs, sync.rs,
+ï¿½                            #   drive_mirror.rs, oauth.rs, shield.rs
 +-- vault-web-auth/          # Browser auth node PWA (WebAuthn + PIN + QR pairing)
 +-- vault-mobile-auth/       # Android companion app (Kotlin/Compose)
 +-- docker-compose.prod.yml  # Production: Go API + postgres:15-alpine
@@ -172,4 +178,4 @@ Hygiene warnings (filenames only):
 
 ## License
 
-MIT License — Copyright (c) 2026 Musfiqur Rahman Saimon. See [LICENSE](./LICENSE).
+MIT License ï¿½ Copyright (c) 2026 Musfiqur Rahman Saimon. See [LICENSE](./LICENSE).
