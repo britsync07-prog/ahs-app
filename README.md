@@ -179,3 +179,8 @@ Hygiene warnings (filenames only):
 ## License
 
 MIT License � Copyright (c) 2026 Musfiqur Rahman Saimon. See [LICENSE](./LICENSE).
+
+
+---
+Keywords: zero-knowledge vault, biometric authentication, webauthn, aes-256-gcm, tauri, rust, security
+
