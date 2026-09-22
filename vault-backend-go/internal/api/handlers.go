@@ -145,10 +145,9 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	var exeUrl, sigUrl string
 	for _, asset := range release.Assets {
-		// Tauri v2 Windows updater artifacts are typically .nsis.zip and .nsis.zip.sig
-		if strings.HasSuffix(asset.Name, ".nsis.zip") || (strings.HasSuffix(asset.Name, ".zip") && !strings.HasSuffix(asset.Name, ".sig")) {
+		if strings.HasSuffix(asset.Name, ".exe") || strings.HasSuffix(asset.Name, ".nsis.zip") || (strings.HasSuffix(asset.Name, ".zip") && !strings.HasSuffix(asset.Name, ".sig")) {
 			exeUrl = asset.BrowserDownloadUrl
-		} else if strings.HasSuffix(asset.Name, ".nsis.zip.sig") || strings.HasSuffix(asset.Name, ".zip.sig") {
+		} else if strings.HasSuffix(asset.Name, ".exe.sig") || strings.HasSuffix(asset.Name, ".nsis.zip.sig") || strings.HasSuffix(asset.Name, ".zip.sig") {
 			sigUrl = asset.BrowserDownloadUrl
 		}
 	}
