@@ -5,7 +5,8 @@ import { Clock, Shield } from "lucide-react";
 export const AutoLockSettings: React.FC = () => {
   const [timeout, setTimeoutValue] = React.useState(() => {
     const saved = localStorage.getItem('vault_autolock_timeout');
-    return saved ? parseInt(saved, 10) : 300;
+    const parsed = saved ? parseInt(saved, 10) : 900;
+    return parsed === 60 || parsed === 300 ? 900 : parsed;
   });
 
   React.useEffect(() => {
@@ -19,10 +20,10 @@ export const AutoLockSettings: React.FC = () => {
   };
 
   const options = [
-    { label: "1 Minute", value: 60 },
-    { label: "5 Minutes", value: 300 },
     { label: "15 Minutes", value: 900 },
     { label: "1 Hour", value: 3600 },
+    { label: "4 Hours", value: 14400 },
+    { label: "8 Hours", value: 28800 },
     { label: "Never", value: 9999999 }, // Effectively disabled
   ];
 
