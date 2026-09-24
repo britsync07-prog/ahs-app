@@ -143,13 +143,20 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var exeUrl, sigUrl string
+	var msiUrl, msiSigUrl, exeUrl, sigUrl string
 	for _, asset := range release.Assets {
-		if strings.HasSuffix(asset.Name, ".exe") || strings.HasSuffix(asset.Name, ".nsis.zip") || (strings.HasSuffix(asset.Name, ".zip") && !strings.HasSuffix(asset.Name, ".sig")) {
+		if strings.HasSuffix(asset.Name, ".msi") || strings.HasSuffix(asset.Name, ".msi.zip") {
+			msiUrl = asset.BrowserDownloadUrl
+		} else if strings.HasSuffix(asset.Name, ".msi.sig") || strings.HasSuffix(asset.Name, ".msi.zip.sig") {
+			msiSigUrl = asset.BrowserDownloadUrl
+		} else if strings.HasSuffix(asset.Name, ".exe") || strings.HasSuffix(asset.Name, ".nsis.zip") || (strings.HasSuffix(asset.Name, ".zip") && !strings.HasSuffix(asset.Name, ".sig")) {
 			exeUrl = asset.BrowserDownloadUrl
 		} else if strings.HasSuffix(asset.Name, ".exe.sig") || strings.HasSuffix(asset.Name, ".nsis.zip.sig") || strings.HasSuffix(asset.Name, ".zip.sig") {
 			sigUrl = asset.BrowserDownloadUrl
 		}
+	}
+	if msiUrl != "" && msiSigUrl != "" {
+		exeUrl, sigUrl = msiUrl, msiSigUrl
 	}
 
 	if exeUrl == "" || sigUrl == "" {
