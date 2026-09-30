@@ -1225,52 +1225,43 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                 let depth = request.headers().iter().find(|h| h.field.equiv("Depth")).map(|h| h.value.as_str()).unwrap_or("infinity");
                 let files_state = app.state::<SharedFileList>();
                 let files = files_state.lock().unwrap();
-                
-                let target_path = url.trim_start_matches('/');
-                let target_ino = if target_path.is_empty() { Some(1) } else { files.values().find(|f| f.name == target_path).map(|f| f.ino) };
 
-                if let Some(ino) = target_ino {
+                let target_path = webdav_path(&url);
+                let target_file = files.values().find(|f| f.name == target_path).cloned();
+                let target_prefix = if target_path.is_empty() { String::new() } else { format!("{}/", target_path) };
+                let is_virtual_dir = target_path.is_empty() || files.values().any(|f| f.name.starts_with(&target_prefix));
+
+                if target_file.is_some() || is_virtual_dir {
                     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n<D:multistatus xmlns:D=\"DAV:\">\n");
-                    
-                    if ino == 1 {
-                        xml.push_str("<D:response>\n");
-                        xml.push_str(&format!("<D:href>{}</D:href>\n", url));
-                        xml.push_str("<D:propstat>\n<D:prop>\n");
-                        xml.push_str("<D:displayname>VaultRoot</D:displayname>\n");
-                        xml.push_str("<D:resourcetype><D:collection/></D:resourcetype>\n");
-                        xml.push_str("<D:creationdate>2024-01-01T00:00:00Z</D:creationdate>\n");
-                        xml.push_str("<D:getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</D:getlastmodified>\n");
-                        xml.push_str("</D:prop>\n<D:status>HTTP/1.1 200 OK</D:status>\n</D:propstat>\n</D:response>\n");
-                    } else if let Some(f) = files.get(&ino) { 
-                        xml.push_str(&generate_dav_response(f, &url)); 
+
+                    if let Some(f) = &target_file {
+                        xml.push_str(&generate_dav_response(f, &url));
+                    } else {
+                        let display_name = if target_path.is_empty() {
+                            "VaultRoot"
+                        } else {
+                            target_path.rsplit('/').next().unwrap_or("VaultRoot")
+                        };
+                        xml.push_str(&generate_dav_dir_response(&url, display_name));
                     }
 
                     if depth != "0" {
+                        let mut seen_dirs = std::collections::HashSet::new();
                         for f in files.values() {
-                            // Because VaultFS stores full paths in `f.name` like "BLEACK/28.jpeg" and hardcodes `parent_ino: 1`,
-                            // we must parse the paths here to simulate folders for Windows WebClient.
-                            let mut include = false;
-                            let mut child_url = String::new();
-                            
-                            if ino == 1 {
-                                // Root directory: include files/folders with NO slashes
-                                if !f.name.contains('/') && f.name != "" {
-                                    include = true;
-                                    child_url = format!("/{}", f.name);
+                            if target_file.as_ref().map_or(false, |target| !matches!(target.kind, fs::VaultFileType::Directory)) {
+                                break;
+                            }
+
+                            let Some(remainder) = f.name.strip_prefix(&target_prefix) else { continue; };
+                            if remainder.is_empty() { continue; }
+
+                            if let Some((dir, _)) = remainder.split_once('/') {
+                                if seen_dirs.insert(dir.to_string()) {
+                                    let child_url = join_webdav_href(&url, dir);
+                                    xml.push_str(&generate_dav_dir_response(&child_url, dir));
                                 }
                             } else {
-                                // Subdirectory: include files/folders directly underneath this target_path
-                                let parent_prefix = format!("{}/", target_path);
-                                if f.name.starts_with(&parent_prefix) && f.name.len() > parent_prefix.len() {
-                                    let remainder = &f.name[parent_prefix.len()..];
-                                    if !remainder.contains('/') {
-                                        include = true;
-                                        child_url = format!("{}/{}", url, remainder);
-                                    }
-                                }
-                            }
-                            
-                            if include {
+                                let child_url = join_webdav_href(&url, remainder);
                                 xml.push_str(&generate_dav_response(f, &child_url));
                             }
                         }
@@ -1283,7 +1274,7 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                 } else { let _ = request.respond(tiny_http::Response::empty(404)); }
             }
             "HEAD" => {
-                let path = url.trim_start_matches('/');
+                let path = webdav_path(&url);
                 let files_state = app.state::<SharedFileList>();
                 let files = files_state.lock().unwrap();
                 if let Some(f) = files.values().find(|f| f.name == path) {
@@ -1293,12 +1284,48 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                 } else { let _ = request.respond(tiny_http::Response::empty(404)); }
             }
             "GET" => {
-                let path = url.trim_start_matches('/');
+                let _guard = TransferGuard::new();
+                let path = webdav_path(&url);
                 let files_state = app.state::<SharedFileList>();
-                let files = files_state.lock().unwrap();
-                if let Some(f) = files.values().find(|f| f.name == path) {
-                    if let Some(shadow_path) = &f.shadow_path {
-                        if let Ok(encrypted_data) = std_fs::read(shadow_path) {
+                let file = {
+                    let files = files_state.lock().unwrap();
+                    files.values().find(|f| f.name == path).cloned()
+                };
+                if let Some(f) = file {
+                    let mut shadow_path = f.shadow_path.clone();
+                    if shadow_path.is_none() {
+                        if let Some(blob_id) = f.cloud_blob_id.clone() {
+                            if let Ok(config_dir) = app.path().app_config_dir() {
+                                let config_path = config_dir.join("onboarding.json");
+                                let dest_path = config_dir.join(".vault_shadow").join(format!("{}.blob", f.ino));
+                                let _ = std_fs::create_dir_all(config_dir.join(".vault_shadow"));
+                                match crypto::stream_download_blob(&config_path, blob_id, &dest_path, None) {
+                                    Ok(_) => {
+                                        {
+                                            let mut files = files_state.lock().unwrap();
+                                            if let Some(file) = files.get_mut(&f.ino) {
+                                                file.shadow_path = Some(dest_path.clone());
+                                            }
+                                            if let Ok(data) = serde_json::to_string(&*files) {
+                                                let _ = std_fs::write(config_dir.join("local_index.json"), data);
+                                            }
+                                            let list: Vec<fs::VaultFile> = files.values().cloned().collect();
+                                            let _ = app.emit("vault-files-updated", list);
+                                        }
+                                        crate::drive_mirror::update_cached_hash(f.ino, &dest_path);
+                                        shadow_path = Some(dest_path);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("WebDAV: failed to download {} on demand: {}", f.name, e);
+                                        let _ = request.respond(tiny_http::Response::empty(500));
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(path) = shadow_path {
+                        if let Ok(encrypted_data) = std_fs::read(path) {
                             if let Ok(decrypted) = crypto::decrypt_local_data(&encrypted_data, key_state.clone()) {
                                 let response = tiny_http::Response::from_data(decrypted);
                                 let _ = request.respond(response);
@@ -1311,7 +1338,7 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
             }
             "PUT" => {
                 let _guard = TransferGuard::new();
-                let path = url.trim_start_matches('/');
+                let path = webdav_path(&url);
                 
                 // Stream request body to a temp file to avoid holding it all in memory
                 let config_dir = app.path().app_config_dir().unwrap();
@@ -1416,7 +1443,7 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                 }
             }
             "DELETE" => {
-                let path = url.trim_start_matches('/');
+                let path = webdav_path(&url);
                 let files_state = app.state::<SharedFileList>();
                 let mut files = files_state.lock().unwrap();
                 
@@ -1434,7 +1461,7 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                 } else { let _ = request.respond(tiny_http::Response::empty(404)); }
             }
             "MKCOL" => {
-                let path = url.trim_start_matches('/');
+                let path = webdav_path(&url);
                 let files_state = app.state::<SharedFileList>();
                 let mut files = files_state.lock().unwrap();
                 
@@ -1457,12 +1484,12 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                 let _ = request.respond(tiny_http::Response::empty(201));
             }
             "MOVE" => {
-                let path = url.trim_start_matches('/');
+                let path = webdav_path(&url);
                 let dest_header = request.headers().iter().find(|h| h.field.equiv("Destination"));
-                
+
                 if let Some(dest) = dest_header {
                     if let Ok(u) = url::Url::parse(dest.value.as_str()) {
-                        let new_path = u.path().trim_start_matches('/');
+                        let new_path = webdav_path(u.path());
                         let files_state = app.state::<SharedFileList>();
                         let mut files = files_state.lock().unwrap();
                         
@@ -1507,13 +1534,94 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
 }
 
 #[cfg(target_os = "windows")]
+fn webdav_path(url: &str) -> String {
+    percent_decode_path(url.trim_start_matches('/'))
+}
+
+#[cfg(target_os = "windows")]
+fn percent_decode_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(target_os = "windows")]
+fn hex_value(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn join_webdav_href(base: &str, child: &str) -> String {
+    let base = base.trim_end_matches('/');
+    if base.is_empty() || base == "/" {
+        format!("/{}", child)
+    } else {
+        format!("{}/{}", base, child)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod webdav_path_tests {
+    use super::webdav_path;
+
+    #[test]
+    fn decodes_webdav_url_path() {
+        assert_eq!(
+            webdav_path("/Folder%20Name/Sub%20Folder/file.pdf"),
+            "Folder Name/Sub Folder/file.pdf"
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn generate_dav_dir_response(href: &str, display_name: &str) -> String {
+    let mut res = String::new();
+    res.push_str("<D:response>\n");
+    res.push_str(&format!("<D:href>{}</D:href>\n", xml_escape(href)));
+    res.push_str("<D:propstat>\n<D:prop>\n");
+    res.push_str(&format!("<D:displayname>{}</D:displayname>\n", xml_escape(display_name)));
+    res.push_str("<D:resourcetype><D:collection/></D:resourcetype>\n");
+    res.push_str("<D:creationdate>2024-01-01T00:00:00Z</D:creationdate>\n");
+    res.push_str("<D:getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</D:getlastmodified>\n");
+    res.push_str("</D:prop>\n<D:status>HTTP/1.1 200 OK</D:status>\n</D:propstat>\n</D:response>\n");
+    res
+}
+
+#[cfg(target_os = "windows")]
 fn generate_dav_response(f: &fs::VaultFile, href: &str) -> String {
     let is_dir = matches!(f.kind, fs::VaultFileType::Directory);
     let mut res = String::new();
     res.push_str("<D:response>\n");
-    res.push_str(&format!("<D:href>{}</D:href>\n", href));
+    res.push_str(&format!("<D:href>{}</D:href>\n", xml_escape(href)));
     res.push_str("<D:propstat>\n<D:prop>\n");
-    res.push_str(&format!("<D:displayname>{}</D:displayname>\n", f.name));
+    res.push_str(&format!("<D:displayname>{}</D:displayname>\n", xml_escape(f.name.rsplit('/').next().unwrap_or(&f.name))));
     if is_dir { 
         res.push_str("<D:resourcetype><D:collection/></D:resourcetype>\n"); 
     } else { 
