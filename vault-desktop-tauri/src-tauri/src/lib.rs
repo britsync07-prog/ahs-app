@@ -1313,9 +1313,26 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                 };
                 if let Some(f) = file {
                     let mut shadow_path = f.shadow_path.clone();
+                    if shadow_path.as_ref().is_some_and(|path| !path.exists()) {
+                        shadow_path = None;
+                    }
                     if shadow_path.is_none() {
-                        if let Some(blob_id) = f.cloud_blob_id.clone() {
-                            if let Ok(config_dir) = app.path().app_config_dir() {
+                        if let Ok(config_dir) = app.path().app_config_dir() {
+                            let local_shadow_path = config_dir.join(".vault_shadow").join(format!("{}.blob", f.ino));
+                            if local_shadow_path.exists() {
+                                {
+                                    let mut files = files_state.lock().unwrap();
+                                    if let Some(file) = files.get_mut(&f.ino) {
+                                        file.shadow_path = Some(local_shadow_path.clone());
+                                    }
+                                    if let Ok(data) = serde_json::to_string(&*files) {
+                                        let _ = std_fs::write(config_dir.join("local_index.json"), data);
+                                    }
+                                    let list: Vec<fs::VaultFile> = files.values().cloned().collect();
+                                    let _ = app.emit("vault-files-updated", list);
+                                }
+                                shadow_path = Some(local_shadow_path);
+                            } else if let Some(blob_id) = f.cloud_blob_id.clone() {
                                 let config_path = config_dir.join("onboarding.json");
                                 let dest_path = config_dir.join(".vault_shadow").join(format!("{}.blob", f.ino));
                                 let _ = std_fs::create_dir_all(config_dir.join(".vault_shadow"));
@@ -1405,6 +1422,9 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                     if let Some(f) = files.get_mut(&ino) {
                         f.size = written;
                         f.modified_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                        f.shadow_path = Some(shadow_path.clone());
+                        f.cloud_blob_id = None;
+                        f.last_synced_hash = None;
                     }
                     
                     let sync_tx = SYNC_TX.lock().unwrap();
@@ -1518,6 +1538,10 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                         let new_prefix = format!("{}/", new_path);
                         let has_children = files.values().any(|f| webdav_index_path(f).starts_with(&old_prefix));
                         if found_ino.is_some() || has_children {
+                            let replaced_file = files.values()
+                                .find(|f| webdav_index_path(f) == new_path && Some(f.ino) != found_ino)
+                                .map(|f| f.ino)
+                                .and_then(|ino| files.remove(&ino));
                             let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
                             for f in files.values_mut() {
                                 let file_path = webdav_index_path(f);
@@ -1530,7 +1554,13 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                                 }
                             }
                             let sync_tx = SYNC_TX.lock().unwrap();
-                            if let Some(tx) = sync_tx.as_ref() { let _ = tx.send(fs::SyncCommand::SyncIndex); }
+                            if let Some(tx) = sync_tx.as_ref() {
+                                if let Some(f) = replaced_file {
+                                    if let Some(p) = f.shadow_path { let _ = tx.send(fs::SyncCommand::PurgeShadow { path: p }); }
+                                    if let Some(bid) = f.cloud_blob_id { let _ = tx.send(fs::SyncCommand::PurgeCloud { blob_id: bid }); }
+                                }
+                                let _ = tx.send(fs::SyncCommand::SyncIndex);
+                            }
                             let _ = request.respond(tiny_http::Response::empty(201));
                             continue;
                         }

@@ -16,6 +16,15 @@ interface VaultFile {
   fullPath?: string;
 }
 
+const decodeVaultPath = (path: string) => {
+  const normalized = path.replace(/\\/g, '/');
+  try {
+    return decodeURIComponent(normalized);
+  } catch {
+    return normalized;
+  }
+};
+
 export const VaultExplorer: React.FC = () => {
   const [backendFiles, setBackendFiles] = useState<VaultFile[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("");
@@ -86,8 +95,8 @@ export const VaultExplorer: React.FC = () => {
     
     backendFiles.forEach(f => {
       if (f.name.startsWith('.')) return;
-      
-      const normalizedPath = f.name.replace(/\\/g, '/');
+
+      const normalizedPath = decodeVaultPath(f.name);
       const isUnderCurrent = currentPath === "" || normalizedPath.startsWith(currentPath + "/");
       
       if (isUnderCurrent) {
@@ -110,7 +119,7 @@ export const VaultExplorer: React.FC = () => {
           virtualFiles.set(parts[0], {
             ...f,
             name: parts[0],
-            fullPath: f.name 
+            fullPath: normalizedPath
           });
         }
       }

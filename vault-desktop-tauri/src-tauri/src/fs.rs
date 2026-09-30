@@ -107,7 +107,7 @@ impl SyncCommand {
     fn priority(&self) -> i32 {
         match self {
             SyncCommand::SyncIndex | SyncCommand::PurgeShadow { .. } | SyncCommand::PullAll | SyncCommand::PurgeCloud { .. } => 10,
-            SyncCommand::SyncFile { .. } => 5,
+            SyncCommand::SyncFile { .. } => 20,
         }
     }
 }

@@ -143,16 +143,16 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var exeUrl, sigUrl string
+	var installerUrl, sigUrl string
 	for _, asset := range release.Assets {
-		if strings.HasSuffix(asset.Name, ".exe") || strings.HasSuffix(asset.Name, ".nsis.zip") || (strings.HasSuffix(asset.Name, ".zip") && !strings.HasSuffix(asset.Name, ".sig")) {
-			exeUrl = asset.BrowserDownloadUrl
-		} else if strings.HasSuffix(asset.Name, ".exe.sig") || strings.HasSuffix(asset.Name, ".nsis.zip.sig") || strings.HasSuffix(asset.Name, ".zip.sig") {
+		if strings.HasSuffix(asset.Name, ".msi") {
+			installerUrl = asset.BrowserDownloadUrl
+		} else if strings.HasSuffix(asset.Name, ".msi.sig") {
 			sigUrl = asset.BrowserDownloadUrl
 		}
 	}
 
-	if exeUrl == "" || sigUrl == "" {
+	if installerUrl == "" || sigUrl == "" {
 		http.Error(w, "Latest release does not include Windows updater assets", http.StatusNotFound)
 		return
 	}
@@ -178,7 +178,7 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		"platforms": map[string]interface{}{
 			"windows-x86_64": map[string]interface{}{
 				"signature": strings.TrimSpace(string(sigBytes)),
-				"url":       exeUrl,
+				"url":       installerUrl,
 			},
 		},
 	}
