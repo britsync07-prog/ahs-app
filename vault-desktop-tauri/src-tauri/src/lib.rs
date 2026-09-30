@@ -1227,11 +1227,9 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                 let files = files_state.lock().unwrap();
 
                 let target_path = webdav_path(&url);
-                let target_file = files.values()
-                    .find(|f| webdav_index_path(f) == target_path && webdav_entry_visible(f))
-                    .cloned();
+                let target_file = files.values().find(|f| webdav_index_path(f) == target_path).cloned();
                 let target_prefix = if target_path.is_empty() { String::new() } else { format!("{}/", target_path) };
-                let is_virtual_dir = target_path.is_empty() || files.values().any(|f| webdav_entry_visible(f) && webdav_index_path(f).starts_with(&target_prefix));
+                let is_virtual_dir = target_path.is_empty() || files.values().any(|f| webdav_index_path(f).starts_with(&target_prefix));
 
                 if target_file.is_some() || is_virtual_dir {
                     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n<D:multistatus xmlns:D=\"DAV:\">\n");
@@ -1253,9 +1251,6 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                             if f.ino == 1 {
                                 continue;
                             }
-                            if !webdav_entry_visible(f) {
-                                continue;
-                            }
                             let file_path = webdav_index_path(f);
                             let Some(remainder) = file_path.strip_prefix(&target_prefix) else { continue; };
                             if remainder.is_empty() { continue; }
@@ -1273,9 +1268,6 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                                 break;
                             }
 
-                            if !webdav_entry_visible(f) {
-                                continue;
-                            }
                             let file_path = webdav_index_path(f);
                             let Some(remainder) = file_path.strip_prefix(&target_prefix) else { continue; };
                             if remainder.is_empty() { continue; }
@@ -1579,13 +1571,6 @@ fn webdav_path(url: &str) -> String {
 #[cfg(target_os = "windows")]
 fn webdav_index_path(file: &fs::VaultFile) -> String {
     percent_decode_path(&file.name)
-}
-
-#[cfg(target_os = "windows")]
-fn webdav_entry_visible(file: &fs::VaultFile) -> bool {
-    matches!(file.kind, fs::VaultFileType::Directory)
-        || file.shadow_path.is_some()
-        || file.cloud_blob_id.is_some()
 }
 
 #[cfg(target_os = "windows")]
