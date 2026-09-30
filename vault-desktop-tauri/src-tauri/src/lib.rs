@@ -1492,12 +1492,21 @@ fn run_webdav_server(app: AppHandle, key_state: SharedKey) {
                         let new_path = webdav_path(u.path());
                         let files_state = app.state::<SharedFileList>();
                         let mut files = files_state.lock().unwrap();
-                        
+
                         let found_ino = files.values().find(|f| f.name == path).map(|f| f.ino);
-                        if let Some(ino) = found_ino {
-                            if let Some(f) = files.get_mut(&ino) {
-                                f.name = new_path.to_string();
-                                f.modified_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                        let old_prefix = format!("{}/", path);
+                        let new_prefix = format!("{}/", new_path);
+                        let has_children = files.values().any(|f| f.name.starts_with(&old_prefix));
+                        if found_ino.is_some() || has_children {
+                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                            for f in files.values_mut() {
+                                if Some(f.ino) == found_ino {
+                                    f.name = new_path.to_string();
+                                    f.modified_at = now;
+                                } else if let Some(suffix) = f.name.strip_prefix(&old_prefix) {
+                                    f.name = format!("{}{}", new_prefix, suffix);
+                                    f.modified_at = now;
+                                }
                             }
                             let sync_tx = SYNC_TX.lock().unwrap();
                             if let Some(tx) = sync_tx.as_ref() { let _ = tx.send(fs::SyncCommand::SyncIndex); }
