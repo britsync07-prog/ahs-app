@@ -176,6 +176,13 @@ Hygiene warnings (filenames only):
 - `logs.txt`, `release.json`, and `latest_release.json` (containing raw GitHub API responses) are committed at the repo root.
 - `vault-backend-go/.env.example` ships convenient-but-weak default passwords; change them for any real deployment.
 
+## Contact
+
+- 📧 Email: [saimon@ascentraconsulting.co.uk](mailto:saimon@ascentraconsulting.co.uk)
+- 💼 LinkedIn: [Musfiqur Rahman Saimon](https://www.linkedin.com/in/musfiqur-rahman-saimon-a5994b3aa)
+- 🐙 GitHub: [@britsync07-prog](https://github.com/britsync07-prog)
+- 🌐 Portfolio: [brit-os.pages.dev](https://brit-os.pages.dev/)
+
 ## License
 
 MIT License � Copyright (c) 2026 Musfiqur Rahman Saimon. See [LICENSE](./LICENSE).
